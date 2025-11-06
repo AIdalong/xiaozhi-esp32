@@ -3,7 +3,8 @@
     "builds": [
         {
             "name": "otto-robot",
-            "sdkconfig_append": []
+            "sdkconfig_append": [
+            ]
         }
     ]
 }

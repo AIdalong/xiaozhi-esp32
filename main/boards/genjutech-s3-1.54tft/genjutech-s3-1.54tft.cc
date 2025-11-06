@@ -1,10 +1,11 @@
 #include "wifi_board.h"
-#include "codecs/es8311_audio_codec.h"
+#include "audio_codecs/es8311_audio_codec.h"
 #include "display/lcd_display.h"
 #include "system_reset.h"
 #include "application.h"
 #include "button.h"
 #include "config.h"
+#include "iot/thing_manager.h"
 #include "led/single_led.h"
 
 #include <esp_log.h>
@@ -20,6 +21,9 @@
 #include "power_manager.h"
 
 #define TAG "GenJuTech_s3_1_54TFT"
+
+LV_FONT_DECLARE(font_puhui_20_4);
+LV_FONT_DECLARE(font_awesome_20_4);
 
 class SparkBotEs8311AudioCodec : public Es8311AudioCodec {
     private:    
@@ -66,13 +70,23 @@ private:
     }
 
     void InitializePowerSaveTimer() {
-        // 第一个参数不为 -1 时，进入睡眠会关闭音频输入
         power_save_timer_ = new PowerSaveTimer(240, 60);
         power_save_timer_->OnEnterSleepMode([this]() {
-            GetDisplay()->SetPowerSaveMode(true);
+            ESP_LOGI(TAG, "Enabling sleep mode");
+            auto display = GetDisplay();
+            display->SetChatMessage("system", "");
+            display->SetEmotion("sleepy");
+            
+            auto codec = GetAudioCodec();
+            codec->EnableInput(false);
         });
         power_save_timer_->OnExitSleepMode([this]() {
-            GetDisplay()->SetPowerSaveMode(false);
+            auto codec = GetAudioCodec();
+            codec->EnableInput(true);
+            
+            auto display = GetDisplay();
+            display->SetChatMessage("system", "");
+            display->SetEmotion("neutral");
         });
         power_save_timer_->SetEnabled(true);
     }
@@ -197,7 +211,20 @@ private:
         ESP_ERROR_CHECK(esp_lcd_panel_invert_color(panel, true));
 
         display_ = new SpiLcdDisplay(panel_io, panel,
-                            DISPLAY_WIDTH, DISPLAY_HEIGHT, DISPLAY_OFFSET_X, DISPLAY_OFFSET_Y, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY);
+                            DISPLAY_WIDTH, DISPLAY_HEIGHT, DISPLAY_OFFSET_X, DISPLAY_OFFSET_Y, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY,
+                            {
+                                .text_font = &font_puhui_20_4,
+                                .icon_font = &font_awesome_20_4,
+                                .emoji_font = font_emoji_64_init(),
+                            });
+    }
+
+    // 物联网初始化，添加对 AI 可见设备
+    void InitializeIot() {
+        auto& thing_manager = iot::ThingManager::GetInstance();
+        thing_manager.AddThing(iot::CreateThing("Speaker"));
+        thing_manager.AddThing(iot::CreateThing("Screen"));
+        thing_manager.AddThing(iot::CreateThing("Battery"));
     }
 
 public:
@@ -211,9 +238,11 @@ public:
         InitializeCodecI2c();
         InitializeSpi();
         InitializeButtons();
-        InitializeSt7789Display();
+        InitializeSt7789Display();  
+        InitializeIot();
         GetBacklight()->RestoreBrightness();
     }
+    
 
     virtual Led* GetLed() override {
         static SingleLed led(BUILTIN_LED_GPIO);

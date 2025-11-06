@@ -1,10 +1,11 @@
 #include "wifi_board.h"
-#include "codecs/no_audio_codec.h"
+#include "audio_codecs/no_audio_codec.h"
 #include "display/lcd_display.h"
 #include "system_reset.h"
 #include "application.h"
 #include "button.h"
 #include "config.h"
+#include "iot/thing_manager.h"
 
 #include <esp_log.h>
 #include "i2c_device.h"
@@ -20,6 +21,10 @@
 #include <iot_button.h>
 
 #define TAG "waveshare_lcd_1_46"
+
+LV_FONT_DECLARE(font_puhui_16_4);
+LV_FONT_DECLARE(font_awesome_16_4);
+
 
 // 在waveshare_lcd_1_46类之前添加新的显示类
 class CustomLcdDisplay : public SpiLcdDisplay {
@@ -43,7 +48,12 @@ public:
                     bool mirror_y,
                     bool swap_xy) 
         : SpiLcdDisplay(io_handle, panel_handle,
-                    width, height, offset_x, offset_y, mirror_x, mirror_y, swap_xy) {
+                    width, height, offset_x, offset_y, mirror_x, mirror_y, swap_xy,
+                    {
+                        .text_font = &font_puhui_16_4,
+                        .icon_font = &font_awesome_16_4,
+                        .emoji_font = font_emoji_64_init(),
+                    }) {
         DisplayLockGuard lock(this);
         lv_display_add_event_cb(display_, rounder_event_cb, LV_EVENT_INVALIDATE_AREA, NULL);
     }
@@ -58,6 +68,7 @@ private:
     button_driver_t* boot_btn_driver_ = nullptr;
     button_driver_t* pwr_btn_driver_ = nullptr;
     static CustomBoard* instance_;
+
 
     void InitializeI2c() {
         // Initialize I2C peripheral
@@ -150,7 +161,6 @@ private:
         // gpio_set_level(PWR_Control_PIN, false);
         gpio_set_level(PWR_Control_PIN, true);
     }
-
     void InitializeButtons() {
         instance_ = this;
         InitializeButtonsCustom();
@@ -205,6 +215,13 @@ private:
         }, this);
     }
 
+    // 物联网初始化，添加对 AI 可见设备
+    void InitializeIot() {
+        auto& thing_manager = iot::ThingManager::GetInstance();
+        thing_manager.AddThing(iot::CreateThing("Speaker"));
+        thing_manager.AddThing(iot::CreateThing("Screen"));
+    }
+
 public:
     CustomBoard() { 
         InitializeI2c();
@@ -212,6 +229,7 @@ public:
         InitializeSpi();
         InitializeSpd2010Display();
         InitializeButtons();
+        InitializeIot();
         GetBacklight()->RestoreBrightness();
     }
 

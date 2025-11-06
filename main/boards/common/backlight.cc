@@ -32,12 +32,12 @@ Backlight::~Backlight() {
 void Backlight::RestoreBrightness() {
     // Load brightness from settings
     Settings settings("display");  
-    int saved_brightness = settings.GetInt("brightness", 75);
+    int saved_brightness = settings.GetInt("brightness", 50);
     
     // 检查亮度值是否为0或过小，设置默认值
     if (saved_brightness <= 0) {
-        ESP_LOGW(TAG, "Brightness value (%d) is too small, setting to default (10)", saved_brightness);
-        saved_brightness = 10;  // 设置一个较低的默认值
+        ESP_LOGW(TAG, "Brightness value (%d) is too small, setting to default (50)", saved_brightness);
+        saved_brightness = 50;  // 设置默认值为50%
     }
     
     SetBrightness(saved_brightness);
@@ -81,12 +81,12 @@ void Backlight::OnTransitionTimer() {
     }
 }
 
-PwmBacklight::PwmBacklight(gpio_num_t pin, bool output_invert, uint32_t freq_hz) : Backlight() {
+PwmBacklight::PwmBacklight(gpio_num_t pin, bool output_invert) : Backlight() {
     const ledc_timer_config_t backlight_timer = {
         .speed_mode = LEDC_LOW_SPEED_MODE,
         .duty_resolution = LEDC_TIMER_10_BIT,
         .timer_num = LEDC_TIMER_0,
-        .freq_hz = freq_hz, //背光pwm频率需要高一点，防止电感啸叫
+        .freq_hz = 25000, //背光pwm频率需要高一点，防止电感啸叫
         .clk_cfg = LEDC_AUTO_CLK,
         .deconfigure = false
     };

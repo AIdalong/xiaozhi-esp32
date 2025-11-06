@@ -1,5 +1,5 @@
 #include "wifi_board.h"
-#include "codecs/no_audio_codec.h"
+#include "audio_codecs/no_audio_codec.h"
 #include "display/lcd_display.h"
 #include "system_reset.h"
 #include "application.h"
@@ -8,6 +8,7 @@
 #include "power_save_timer.h"
 #include "mcp_server.h"
 #include "lamp_controller.h"
+#include "iot/thing_manager.h"
 #include "led/single_led.h"
 #include "assets/lang_config.h"
 
@@ -26,7 +27,11 @@
 #include "power_manager.h"
 #endif
 
+
 #define TAG "ESP32_CGC_144"
+
+LV_FONT_DECLARE(font_puhui_14_1);
+LV_FONT_DECLARE(font_awesome_14_1);
 
 class ESP32_CGC_144 : public WifiBoard {
 private:
@@ -65,16 +70,20 @@ void InitializePowerManager() {
     void InitializePowerSaveTimer() {
         power_save_timer_ = new PowerSaveTimer(-1, 60);
         power_save_timer_->OnEnterSleepMode([this]() {
-            GetDisplay()->SetPowerSaveMode(true);
+            ESP_LOGI(TAG, "Enabling sleep mode");
+            display_->SetChatMessage("system", "");
+            display_->SetEmotion("sleepy");
             GetBacklight()->SetBrightness(1);
         });
         power_save_timer_->OnExitSleepMode([this]() {
-            GetDisplay()->SetPowerSaveMode(false);
+            display_->SetChatMessage("system", "");
+            display_->SetEmotion("neutral");
             GetBacklight()->RestoreBrightness();
         });
 
         power_save_timer_->SetEnabled(true);
     }
+
 
     void InitializeSpi() {
         spi_bus_config_t buscfg = {};
@@ -117,10 +126,19 @@ void InitializePowerManager() {
         esp_lcd_panel_swap_xy(panel, DISPLAY_SWAP_XY);
         esp_lcd_panel_mirror(panel, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y);
         display_ = new SpiLcdDisplay(panel_io, panel,
-                                    DISPLAY_WIDTH, DISPLAY_HEIGHT, DISPLAY_OFFSET_X, DISPLAY_OFFSET_Y, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY);
+                                    DISPLAY_WIDTH, DISPLAY_HEIGHT, DISPLAY_OFFSET_X, DISPLAY_OFFSET_Y, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY,
+                                    {
+                                        .text_font = &font_puhui_14_1,
+                                        .icon_font = &font_awesome_14_1,
+                                        .emoji_font = font_emoji_32_init(),
+                                    });
     }
+
+
+
  
     void InitializeButtons() {
+        
         boot_button_.OnClick([this]() {
             power_save_timer_->WakeUp();
             auto& app = Application::GetInstance();
@@ -135,11 +153,20 @@ void InitializePowerManager() {
             std::string wake_word="你好小智";
             Application::GetInstance().WakeWordInvoke(wake_word);
         });
+
     }
 
     // 物联网初始化，添加对 AI 可见设备
-    void InitializeTools() {
+    void InitializeIot() {
+#if CONFIG_IOT_PROTOCOL_XIAOZHI
+        auto& thing_manager = iot::ThingManager::GetInstance();
+        thing_manager.AddThing(iot::CreateThing("Screen"));
+        thing_manager.AddThing(iot::CreateThing("BoardControl"));
+        thing_manager.AddThing(iot::CreateThing("Battery"));
+        thing_manager.AddThing(iot::CreateThing("Lamp"));
+#elif CONFIG_IOT_PROTOCOL_MCP
         static LampController lamp(LAMP_GPIO);
+#endif
     }
 
 public:
@@ -150,11 +177,12 @@ public:
         InitializeSpi();
         InitializeSt7735Display();
         InitializeButtons();
-        InitializeTools();
+        InitializeIot();
         GetBacklight()->RestoreBrightness();
     }
 
-    virtual AudioCodec* GetAudioCodec() override {
+    virtual AudioCodec* GetAudioCodec() override 
+    {
         static NoAudioCodecSimplex audio_codec(AUDIO_INPUT_SAMPLE_RATE, AUDIO_OUTPUT_SAMPLE_RATE,
             AUDIO_I2S_SPK_GPIO_BCLK, AUDIO_I2S_SPK_GPIO_LRCK, AUDIO_I2S_SPK_GPIO_DOUT, AUDIO_I2S_MIC_GPIO_SCK, AUDIO_I2S_MIC_GPIO_WS, AUDIO_I2S_MIC_GPIO_DIN);
         return &audio_codec;

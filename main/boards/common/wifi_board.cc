@@ -3,15 +3,20 @@
 #include "display.h"
 #include "application.h"
 #include "system_info.h"
+#include "font_awesome_symbols.h"
 #include "settings.h"
 #include "assets/lang_config.h"
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
-#include <esp_network.h>
+#include <esp_http.h>
+#include <esp_mqtt.h>
+#include <esp_udp.h>
+#include <tcp_transport.h>
+#include <tls_transport.h>
+#include <web_socket.h>
 #include <esp_log.h>
 
-#include <font_awesome.h>
 #include <wifi_station.h>
 #include <wifi_configuration_ap.h>
 #include <ssid_manager.h>
@@ -41,9 +46,6 @@ void WifiBoard::EnterWifiConfigMode() {
     wifi_ap.SetSsidPrefix("Xiaozhi");
     wifi_ap.Start();
 
-    // 等待 1.5 秒显示开发板信息
-    vTaskDelay(pdMS_TO_TICKS(1500));
-
     // 显示 WiFi 配置 AP 的 SSID 和 Web 服务器 URL
     std::string hint = Lang::Strings::CONNECT_TO_HOTSPOT;
     hint += wifi_ap.GetSsid();
@@ -52,21 +54,17 @@ void WifiBoard::EnterWifiConfigMode() {
     hint += "\n\n";
     
     // 播报配置 WiFi 的提示
-    application.Alert(Lang::Strings::WIFI_CONFIG_MODE, hint.c_str(), "gear", Lang::Sounds::OGG_WIFICONFIG);
+    application.Alert(Lang::Strings::WIFI_CONFIG_MODE, hint.c_str(), "", Lang::Sounds::P3_WIFICONFIG);
 
-    #if CONFIG_USE_ACOUSTIC_WIFI_PROVISIONING
-    auto display = Board::GetInstance().GetDisplay();
-    auto codec = Board::GetInstance().GetAudioCodec();
-    int channel = 1;
-    if (codec) {
-        channel = codec->input_channels();
-    }
-    ESP_LOGI(TAG, "Start receiving WiFi credentials from audio, input channels: %d", channel);
-    audio_wifi_config::ReceiveWifiCredentialsFromAudio(&application, &wifi_ap, display, channel);
+    #if USE_ACOUSTIC_WIFI_PROVISIONING
+    audio_wifi_config::ReceiveWifiCredentialsFromAudio(&application, &wifi_ap);
     #endif
     
     // Wait forever until reset after configuration
     while (true) {
+        int free_sram = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+        int min_free_sram = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL);
+        ESP_LOGI(TAG, "Free internal: %u minimal internal: %u", free_sram, min_free_sram);
         vTaskDelay(pdMS_TO_TICKS(10000));
     }
 }
@@ -116,9 +114,27 @@ void WifiBoard::StartNetwork() {
     }
 }
 
-NetworkInterface* WifiBoard::GetNetwork() {
-    static EspNetwork network;
-    return &network;
+Http* WifiBoard::CreateHttp() {
+    return new EspHttp();
+}
+
+WebSocket* WifiBoard::CreateWebSocket() {
+    Settings settings("websocket", false);
+    std::string url = settings.GetString("url");
+    if (url.find("wss://") == 0) {
+        return new WebSocket(new TlsTransport());
+    } else {
+        return new WebSocket(new TcpTransport());
+    }
+    return nullptr;
+}
+
+Mqtt* WifiBoard::CreateMqtt() {
+    return new EspMqtt();
+}
+
+Udp* WifiBoard::CreateUdp() {
+    return new EspUdp();
 }
 
 const char* WifiBoard::GetNetworkStateIcon() {
@@ -127,7 +143,7 @@ const char* WifiBoard::GetNetworkStateIcon() {
     }
     auto& wifi_station = WifiStation::GetInstance();
     if (!wifi_station.IsConnected()) {
-        return FONT_AWESOME_WIFI_SLASH;
+        return FONT_AWESOME_WIFI_OFF;
     }
     int8_t rssi = wifi_station.GetRssi();
     if (rssi >= -60) {
@@ -219,10 +235,7 @@ std::string WifiBoard::GetDeviceStatusJson() {
     }
     auto display = board.GetDisplay();
     if (display && display->height() > 64) { // For LCD display only
-        auto theme = display->GetTheme();
-        if (theme != nullptr) {
-            cJSON_AddStringToObject(screen, "theme", theme->name().c_str());
-        }
+        cJSON_AddStringToObject(screen, "theme", display->GetTheme().c_str());
     }
     cJSON_AddItemToObject(root, "screen", screen);
 

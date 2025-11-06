@@ -8,7 +8,7 @@
 #include <wifi_station.h>
 
 #include "application.h"
-#include "codecs/no_audio_codec.h"
+#include "audio_codecs/no_audio_codec.h"
 #include "button.h"
 #include "config.h"
 #include "display/lcd_display.h"
@@ -23,6 +23,9 @@
 
 // 控制器初始化函数声明
 void InitializeElectronBotController();
+
+LV_FONT_DECLARE(font_puhui_20_4);
+LV_FONT_DECLARE(font_awesome_20_4);
 
 class ElectronBot : public WifiBoard {
 private:
@@ -70,7 +73,12 @@ private:
 
         display_ = new ElectronEmojiDisplay(io_handle, panel_handle, DISPLAY_WIDTH, DISPLAY_HEIGHT,
                                             DISPLAY_OFFSET_X, DISPLAY_OFFSET_Y, DISPLAY_MIRROR_X,
-                                            DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY);
+                                            DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY,
+                                            {
+                                                .text_font = &font_puhui_20_4,
+                                                .icon_font = &font_awesome_20_4,
+                                                .emoji_font = font_emoji_64_init(),
+                                            });
     }
 
     void InitializeButtons() {

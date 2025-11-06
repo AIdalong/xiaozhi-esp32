@@ -49,19 +49,18 @@ std::string Ota::GetCheckVersionUrl() {
     return url;
 }
 
-std::unique_ptr<Http> Ota::SetupHttp() {
+Http* Ota::SetupHttp() {
     auto& board = Board::GetInstance();
-    auto network = board.GetNetwork();
-    auto http = network->CreateHttp(0);
-    auto user_agent = SystemInfo::GetUserAgent();
+    auto app_desc = esp_app_get_description();
+
+    auto http = board.CreateHttp();
     http->SetHeader("Activation-Version", has_serial_number_ ? "2" : "1");
     http->SetHeader("Device-Id", SystemInfo::GetMacAddress().c_str());
     http->SetHeader("Client-Id", board.GetUuid());
     if (has_serial_number_) {
         http->SetHeader("Serial-Number", serial_number_.c_str());
-        ESP_LOGI(TAG, "Setup HTTP, User-Agent: %s, Serial-Number: %s", user_agent.c_str(), serial_number_.c_str());
     }
-    http->SetHeader("User-Agent", user_agent);
+    http->SetHeader("User-Agent", std::string(BOARD_NAME "/") + app_desc->version);
     http->SetHeader("Accept-Language", Lang::CODE);
     http->SetHeader("Content-Type", "application/json");
 
@@ -85,9 +84,9 @@ bool Ota::CheckVersion() {
         return false;
     }
 
-    auto http = SetupHttp();
+    auto http = std::unique_ptr<Http>(SetupHttp());
 
-    std::string data = board.GetSystemInfoJson();
+    std::string data = board.GetJson();
     std::string method = data.length() > 0 ? "POST" : "GET";
     http->SetContent(std::move(data));
 
@@ -260,35 +259,34 @@ void Ota::MarkCurrentVersionValid() {
     }
 }
 
-bool Ota::Upgrade(const std::string& firmware_url) {
+void Ota::Upgrade(const std::string& firmware_url) {
     ESP_LOGI(TAG, "Upgrading firmware from %s", firmware_url.c_str());
     esp_ota_handle_t update_handle = 0;
     auto update_partition = esp_ota_get_next_update_partition(NULL);
     if (update_partition == NULL) {
         ESP_LOGE(TAG, "Failed to get update partition");
-        return false;
+        return;
     }
 
     ESP_LOGI(TAG, "Writing to partition %s at offset 0x%lx", update_partition->label, update_partition->address);
     bool image_header_checked = false;
     std::string image_header;
 
-    auto network = Board::GetInstance().GetNetwork();
-    auto http = network->CreateHttp(0);
+    auto http = std::unique_ptr<Http>(Board::GetInstance().CreateHttp());
     if (!http->Open("GET", firmware_url)) {
         ESP_LOGE(TAG, "Failed to open HTTP connection");
-        return false;
+        return;
     }
 
     if (http->GetStatusCode() != 200) {
         ESP_LOGE(TAG, "Failed to get firmware, status code: %d", http->GetStatusCode());
-        return false;
+        return;
     }
 
     size_t content_length = http->GetBodyLength();
     if (content_length == 0) {
         ESP_LOGE(TAG, "Failed to get content length");
-        return false;
+        return;
     }
 
     char buffer[512];
@@ -298,7 +296,7 @@ bool Ota::Upgrade(const std::string& firmware_url) {
         int ret = http->Read(buffer, sizeof(buffer));
         if (ret < 0) {
             ESP_LOGE(TAG, "Failed to read HTTP data: %s", esp_err_to_name(ret));
-            return false;
+            return;
         }
 
         // Calculate speed and progress every second
@@ -323,14 +321,18 @@ bool Ota::Upgrade(const std::string& firmware_url) {
             if (image_header.size() >= sizeof(esp_image_header_t) + sizeof(esp_image_segment_header_t) + sizeof(esp_app_desc_t)) {
                 esp_app_desc_t new_app_info;
                 memcpy(&new_app_info, image_header.data() + sizeof(esp_image_header_t) + sizeof(esp_image_segment_header_t), sizeof(esp_app_desc_t));
-                
+                ESP_LOGI(TAG, "New firmware version: %s", new_app_info.version);
+
                 auto current_version = esp_app_get_description()->version;
-                ESP_LOGI(TAG, "Current version: %s, New version: %s", current_version, new_app_info.version);
+                if (memcmp(new_app_info.version, current_version, sizeof(new_app_info.version)) == 0) {
+                    ESP_LOGE(TAG, "Firmware version is the same, skipping upgrade");
+                    return;
+                }
 
                 if (esp_ota_begin(update_partition, OTA_WITH_SEQUENTIAL_WRITES, &update_handle)) {
                     esp_ota_abort(update_handle);
                     ESP_LOGE(TAG, "Failed to begin OTA");
-                    return false;
+                    return;
                 }
 
                 image_header_checked = true;
@@ -341,7 +343,7 @@ bool Ota::Upgrade(const std::string& firmware_url) {
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "Failed to write OTA data: %s", esp_err_to_name(err));
             esp_ota_abort(update_handle);
-            return false;
+            return;
         }
     }
     http->Close();
@@ -353,27 +355,23 @@ bool Ota::Upgrade(const std::string& firmware_url) {
         } else {
             ESP_LOGE(TAG, "Failed to end OTA: %s", esp_err_to_name(err));
         }
-        return false;
+        return;
     }
 
     err = esp_ota_set_boot_partition(update_partition);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to set boot partition: %s", esp_err_to_name(err));
-        return false;
+        return;
     }
 
-    ESP_LOGI(TAG, "Firmware upgrade successful");
-    return true;
+    ESP_LOGI(TAG, "Firmware upgrade successful, rebooting in 3 seconds...");
+    vTaskDelay(pdMS_TO_TICKS(3000));
+    esp_restart();
 }
 
-bool Ota::StartUpgrade(std::function<void(int progress, size_t speed)> callback) {
+void Ota::StartUpgrade(std::function<void(int progress, size_t speed)> callback) {
     upgrade_callback_ = callback;
-    return Upgrade(firmware_url_);
-}
-
-bool Ota::StartUpgradeFromUrl(const std::string& url, std::function<void(int progress, size_t speed)> callback) {
-    upgrade_callback_ = callback;
-    return Upgrade(url);
+    Upgrade(firmware_url_);
 }
 
 std::vector<int> Ota::ParseVersion(const std::string& version) {
@@ -453,7 +451,7 @@ esp_err_t Ota::Activate() {
         url += "activate";
     }
 
-    auto http = SetupHttp();
+    auto http = std::unique_ptr<Http>(SetupHttp());
 
     std::string data = GetActivationPayload();
     http->SetContent(std::move(data));

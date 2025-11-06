@@ -6,6 +6,7 @@
 #include "config.h"
 #include "power_save_timer.h"
 #include "i2c_device.h"
+#include "iot/thing_manager.h"
 
 #include <esp_log.h>
 #include <driver/i2c_master.h>
@@ -15,6 +16,9 @@
 #include "esp_lcd_gc9d01n.h"
 
 #define TAG "LilygoTCircleS3Board"
+
+LV_FONT_DECLARE(font_puhui_16_4);
+LV_FONT_DECLARE(font_awesome_16_4);
 
 class Cst816x : public I2cDevice {
 public:
@@ -61,11 +65,16 @@ private:
     void InitializePowerSaveTimer() {
         power_save_timer_ = new PowerSaveTimer(-1, 60, 300);
         power_save_timer_->OnEnterSleepMode([this]() {
-            GetDisplay()->SetPowerSaveMode(true);
+            ESP_LOGI(TAG, "Enabling sleep mode");
+            auto display = GetDisplay();
+            display->SetChatMessage("system", "");
+            display->SetEmotion("sleepy");
             GetBacklight()->SetBrightness(10);
         });
         power_save_timer_->OnExitSleepMode([this]() {
-            GetDisplay()->SetPowerSaveMode(false);
+            auto display = GetDisplay();
+            display->SetChatMessage("system", "");
+            display->SetEmotion("neutral");
             GetBacklight()->RestoreBrightness();
         });
         power_save_timer_->SetEnabled(true);
@@ -182,7 +191,12 @@ private:
 
         display_ = new SpiLcdDisplay(panel_io, panel,
                                   DISPLAY_WIDTH, DISPLAY_HEIGHT, DISPLAY_OFFSET_X, DISPLAY_OFFSET_Y, DISPLAY_MIRROR_X,
-                                  DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY);
+                                  DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY,
+                                  {
+                                      .text_font = &font_puhui_16_4,
+                                      .icon_font = &font_awesome_16_4,
+                                      .emoji_font = font_emoji_32_init(),
+                                  });
 
         gpio_config_t config;
         config.pin_bit_mask = BIT64(DISPLAY_BL);
@@ -217,6 +231,11 @@ public:
         InitSpi();
         InitGc9d01nDisplay();
         InitializeButtons();
+#if CONFIG_IOT_PROTOCOL_XIAOZHI
+        auto &thing_manager = iot::ThingManager::GetInstance();
+        thing_manager.AddThing(iot::CreateThing("Speaker"));
+        thing_manager.AddThing(iot::CreateThing("Screen"));
+#endif       
         GetBacklight()->RestoreBrightness();
     }
 

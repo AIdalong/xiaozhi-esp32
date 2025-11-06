@@ -1,9 +1,10 @@
 #include "wifi_board.h"
-#include "codecs/no_audio_codec.h"
+#include "audio_codecs/no_audio_codec.h"
 #include "display/lcd_display.h"
 #include "application.h"
 #include "i2c_device.h"
 #include "config.h"
+#include "iot/thing_manager.h"
 
 #include <esp_log.h>
 #include <driver/i2c_master.h>
@@ -15,6 +16,11 @@
 #include <esp_timer.h>
 
 #define TAG "TaijiPiS3Board"
+
+
+LV_FONT_DECLARE(font_puhui_20_4);
+LV_FONT_DECLARE(font_awesome_20_4);
+
 
 static const st77916_lcd_init_cmd_t lcd_init_cmds[] = {
 #ifdef CONFIG_TAIJIPAI_I2S_TYPE_STD
@@ -590,9 +596,20 @@ private:
         esp_lcd_panel_mirror(panel, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y);
 
         display_ = new SpiLcdDisplay(panel_io, panel,
-                                    DISPLAY_WIDTH, DISPLAY_HEIGHT, DISPLAY_OFFSET_X, DISPLAY_OFFSET_Y, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY);
+                                    DISPLAY_WIDTH, DISPLAY_HEIGHT, DISPLAY_OFFSET_X, DISPLAY_OFFSET_Y, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY,
+                                    {
+                                        .text_font = &font_puhui_20_4,
+                                        .icon_font = &font_awesome_20_4,
+                                        .emoji_font = font_emoji_64_init(),
+                                    });
     }
 
+    // 物联网初始化，添加对 AI 可见设备
+    void InitializeIot() {
+        auto& thing_manager = iot::ThingManager::GetInstance();
+        thing_manager.AddThing(iot::CreateThing("Speaker"));
+        thing_manager.AddThing(iot::CreateThing("Screen"));
+    }
     void InitializeMute() {
         gpio_reset_pin(AUDIO_MUTE_PIN);
         /* Set the GPIO as a push/pull output */
@@ -606,6 +623,7 @@ public:
         InitializeCst816sTouchPad();
         InitializeSpi();
         Initializest77916Display();
+        InitializeIot();
         InitializeMute();
         GetBacklight()->RestoreBrightness();
     }
@@ -618,17 +636,9 @@ public:
             AUDIO_I2S_GPIO_BCLK,
             AUDIO_I2S_GPIO_WS,
             AUDIO_I2S_GPIO_DOUT,
-            #ifdef CONFIG_I2S_USE_2SLOT
-            I2S_STD_SLOT_BOTH,
-            #endif
             AUDIO_MIC_SCK_PIN,
             AUDIO_MIC_WS_PIN,
-	        #ifdef CONFIG_I2S_USE_2SLOT
-            AUDIO_MIC_SD_PIN,
-            I2S_STD_SLOT_LEFT
-            #else
             AUDIO_MIC_SD_PIN
-            #endif
         );
 #else
         static NoAudioCodecSimplexPdm audio_codec(
@@ -637,9 +647,6 @@ public:
             AUDIO_I2S_GPIO_BCLK,
             AUDIO_I2S_GPIO_WS,
             AUDIO_I2S_GPIO_DOUT,
-            #ifdef CONFIG_I2S_USE_2SLOT
-            I2S_STD_SLOT_BOTH,
-            #endif 
             AUDIO_MIC_WS_PIN,
             AUDIO_MIC_SD_PIN
         );

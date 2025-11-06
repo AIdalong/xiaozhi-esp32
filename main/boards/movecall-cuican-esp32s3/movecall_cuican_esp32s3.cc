@@ -1,9 +1,10 @@
 #include "wifi_board.h"
-#include "codecs/es8311_audio_codec.h"
+#include "audio_codecs/es8311_audio_codec.h"
 #include "display/lcd_display.h"
 #include "application.h"
 #include "button.h"
 #include "config.h"
+#include "iot/thing_manager.h"
 #include "led/single_led.h"
 
 #include <wifi_station.h>
@@ -19,6 +20,9 @@
 #include "driver/spi_master.h"
 
 #define TAG "MovecallCuicanESP32S3"
+
+LV_FONT_DECLARE(font_puhui_16_4);
+LV_FONT_DECLARE(font_awesome_16_4);
 
 class MovecallCuicanESP32S3 : public WifiBoard {
 private:
@@ -76,7 +80,12 @@ private:
         ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel_handle, true)); 
 
         display_ = new SpiLcdDisplay(io_handle, panel_handle,
-                                    DISPLAY_WIDTH, DISPLAY_HEIGHT, DISPLAY_OFFSET_X, DISPLAY_OFFSET_Y, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY);
+                                    DISPLAY_WIDTH, DISPLAY_HEIGHT, DISPLAY_OFFSET_X, DISPLAY_OFFSET_Y, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY,
+                                    {
+                                        .text_font = &font_puhui_16_4,
+                                        .icon_font = &font_awesome_16_4,
+                                        .emoji_font = font_emoji_64_init(),
+                                    });
     }
 
     void InitializeButtons() {
@@ -89,12 +98,20 @@ private:
         });
     }
 
+    // 物联网初始化，添加对 AI 可见设备
+    void InitializeIot() {
+        auto& thing_manager = iot::ThingManager::GetInstance();
+        thing_manager.AddThing(iot::CreateThing("Speaker")); 
+        thing_manager.AddThing(iot::CreateThing("Screen"));   
+    }
+
 public:
     MovecallCuicanESP32S3() : boot_button_(BOOT_BUTTON_GPIO) {  
         InitializeCodecI2c();
         InitializeSpi();
         InitializeGc9a01Display();
         InitializeButtons();
+        InitializeIot();
         GetBacklight()->RestoreBrightness();
     }
 

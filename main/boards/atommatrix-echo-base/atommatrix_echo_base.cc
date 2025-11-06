@@ -1,9 +1,10 @@
 #include "wifi_board.h"
-#include "codecs/es8311_audio_codec.h"
+#include "audio_codecs/es8311_audio_codec.h"
 #include "application.h"
 #include "button.h"
 #include "config.h"
 #include "i2c_device.h"
+#include "iot/thing_manager.h"
 
 #include <esp_log.h>
 #include <driver/i2c_master.h>
@@ -32,6 +33,7 @@ public:
         WriteReg(PI4IOE_REG_IO_OUT, mute ? 0x00 : 0xFF);
     }
 };
+
 
 class AtomMatrixEchoBaseBoard : public WifiBoard {
 private:
@@ -86,6 +88,7 @@ private:
         pi4ioe_->SetSpeakerMute(false);
     }
 
+
     void InitializeButtons() {
         face_button_.OnClick([this]() {
 
@@ -98,12 +101,19 @@ private:
         });
     }
 
+    // 物联网初始化，添加对 AI 可见设备
+    void InitializeIot() {
+        auto& thing_manager = iot::ThingManager::GetInstance();
+        thing_manager.AddThing(iot::CreateThing("Speaker"));
+    }
+
 public:
     AtomMatrixEchoBaseBoard() : face_button_(BOOT_BUTTON_GPIO) {
         InitializeI2c();
         I2cDetect();
         InitializePi4ioe();
         InitializeButtons();
+        InitializeIot();
     }
 
     virtual Led* GetLed() override {
