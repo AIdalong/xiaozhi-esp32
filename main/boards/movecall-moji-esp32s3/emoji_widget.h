@@ -23,6 +23,9 @@ public:
     ~EmojiPlayer();
 
     void StartPlayer(int aaf, bool repeat, int fps);
+            // Play the given animation once. When playback completes, on_complete will be invoked
+    // on the player's task context. The callback will be cleared after invocation.
+    void PlayOnce(int aaf, int fps, std::function<void()> on_complete = {});
     void StopPlayer();
 
 private:
@@ -35,6 +38,8 @@ private:
     esp_lcd_panel_handle_t panel_; // 新增成员变量
     int x_offset_ = 0;
     int y_offset_ = 0;
+    // optional callback invoked when PlayOnce finishes
+    std::function<void()> play_once_callback_;
 };
 
 class EmojiWidget : public Display {

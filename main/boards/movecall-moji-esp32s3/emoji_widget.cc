@@ -6,6 +6,12 @@
 #include "mmap_generate_moji_emoji.h"
 #include "config.h"
 
+#include <functional>
+#include <tuple>
+#include <unordered_map>
+#include <string>
+#include <utility>
+
 #include <esp_lcd_panel_io.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -81,10 +87,40 @@ EmojiPlayer::~EmojiPlayer()
     }
 }
 
+void EmojiPlayer::PlayOnce(int aaf, int fps, std::function<void()> on_complete)
+{
+    if (player_handle_) {
+
+        uint32_t start, end;
+        const void *src_data;
+        size_t src_len;
+
+        src_data = mmap_assets_get_mem(assets_handle_, aaf);
+        src_len = mmap_assets_get_size(assets_handle_, aaf);
+
+    anim_player_set_src_data(player_handle_, src_data, src_len);
+        anim_player_get_segment(player_handle_, &start, &end);
+        anim_player_set_segment(player_handle_, start, end, fps, false);
+        anim_player_update(player_handle_, PLAYER_ACTION_START);
+
+        // 获取动画帧总宽高（假设每帧分块x_start=0, x_end=width, y_start=0, y_end=height）
+        // 这里用anim_player_get_width/height等API，如果没有则在OnFlush首块记录
+        // 先清零偏移
+        x_offset_ = 0;
+        y_offset_ = 0;
+
+        // store completion callback (may be empty)
+        play_once_callback_ = std::move(on_complete);
+    }
+}
+
+
+
 void EmojiPlayer::StartPlayer(int aaf, bool repeat, int fps)
 {
     if (player_handle_) {
-        // 单次播放恢复逻辑已删除
+        // 单次播放恢复逻辑s
+
         
         // 已移除全屏清黑色代码
         uint32_t start, end;
@@ -107,6 +143,9 @@ void EmojiPlayer::StartPlayer(int aaf, bool repeat, int fps)
         // 先清零偏移
         x_offset_ = 0;
         y_offset_ = 0;
+
+
+
     }
 }
 
@@ -127,17 +166,31 @@ void EmojiPlayer::OnUpdate(anim_player_handle_t handle, player_event_t event)
     switch (event) {
         case PLAYER_EVENT_ONE_FRAME_DONE:
             // 单帧播放完成，不需要特殊处理
+            // ESP_LOGI(TAG, "EmojiPlayer: One frame done");
             break;
             
         case PLAYER_EVENT_ALL_FRAME_DONE:
-            // 所有帧播放完成
+            // 所有帧播放完成 — if PlayOnce had a completion callback, invoke it and clear
+            // ESP_LOGI(TAG, "EmojiPlayer: All frames done");
+            if (self->play_once_callback_) {
+                // move it out and clear to avoid reentrancy issues
+                auto cb = std::move(self->play_once_callback_);
+                self->play_once_callback_ = {};
+                try {
+                    cb();
+                } catch (...) {
+                    ESP_LOGW(TAG, "PlayOnce callback threw an exception");
+                }
+            }
             break;
             
         case PLAYER_EVENT_IDLE:
+            // ESP_LOGI(TAG, "EmojiPlayer: Idle");
             // 播放器进入空闲状态
             break;
             
         default:
+            // ESP_LOGI(TAG, "EmojiPlayer: Unknown event");
             break;
     }
 }
