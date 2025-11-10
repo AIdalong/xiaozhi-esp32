@@ -12,6 +12,10 @@
 #include "backlight.h"
 #include "bmi270.h"
 #include "bmi2.h"
+#include "gyro_sensor.h"
+#include "base_controller.h"
+#include "motion_detector.h"
+#include <memory>
 #include <esp_rom_sys.h>
 
 #include <wifi_station.h>
@@ -133,41 +137,14 @@ private:
     bool do_calibration_ = false;
     uint32_t battery_level_ = 0;
     
-    // BMI270陀螺仪相关（官方驱动）
-    bmi270_handle_t bmi_handle_ = NULL;
-    i2c_master_dev_handle_t bmi_idf_dev_ = NULL;
-    esp_timer_handle_t gyro_timer_;
-    struct { struct { float x, y, z; } accel; struct { float x, y, z; } gyro; } last_sensor_data_{};
-    
-    // 晃动检测需要存储所有三个轴的陀螺仪数据
-    std::vector<float> gyro_x_buffer;
-    std::vector<float> gyro_y_buffer;
-    bool gyro_initialized_ = false;
-    esp_timer_handle_t bmi270_init_timer_ = nullptr;
-    bool motor_uart_initialized_ = false;
-
-    // 设备放置状态
-    enum PlacementState {
-        kPlacementIndependent = 0,   // 独立放置（未在底座上）
-        kPlacementRotatingBase = 1,  // 放在旋转底座上
-        kPlacementStaticBase   = 2   // 放在普通底座上（预留）
-    };
-    PlacementState placement_state_ = kPlacementIndependent;
-    TaskHandle_t base_probe_task_handle_ = nullptr;
+    // BMI270 sensor wrapper
+    std::unique_ptr<Bmi270Sensor> bmi_sensor_;
+    esp_timer_handle_t bmi270_init_timer_ = nullptr; // used to defer sensor init
+    std::unique_ptr<BaseController> base_controller_;
+    std::unique_ptr<MotionDetector> motion_detector_;
 
     // 车辆姿态检测相关
     struct {
-        // 数据积累缓冲区
-        std::vector<float> accel_x_buffer;
-        std::vector<float> accel_y_buffer;
-        std::vector<float> gyro_z_buffer;  // 改为Z轴陀螺仪
-        const int BUFFER_SIZE = 10;  // 积累10个数据点
-        
-        // 滤波结果
-        float accel_x_filtered = 0.0f;
-        float accel_y_filtered = 0.0f;
-        float gyro_z_filtered = 0.0f;  // 改为Z轴陀螺仪
-        
         int64_t last_animation_time = 0;
         const int64_t ANIMATION_COOLDOWN_US = 3000 * 1000;  // 3秒冷却时间，防止重复触发
         int64_t init_start_time = 0;  // 初始化开始时间
@@ -179,28 +156,20 @@ private:
         int default_emoji_id_ = MMAP_MOJI_EMOJI_WINKING_AAF;  // 默认表情ID
         const int64_t ANIMATION_PLAY_DURATION_US = 4000 * 1000;  // 动画播放持续时间：4秒
         
-        // 晃动检测相关
-        int64_t shake_start_time = 0;  // 晃动开始时间
-        int64_t last_shake_animation_time = 0;  // 上次晃动动画时间
-        const int64_t SHAKE_DETECTION_DURATION_US = 3000 * 1000;  // 3秒晃动检测时间
-        const int64_t SHAKE_COOLDOWN_US = 5000 * 1000;  // 5秒晃动冷却时间
-        const float SHAKE_THRESHOLD = 15.0f;  // 晃动检测阈值 (deg/s)
-        bool is_shaking = false;  // 是否正在晃动
-        
         // IDLE状态表情轮播相关
         esp_timer_handle_t idle_emoji_rotation_timer_ = nullptr;  // IDLE表情轮播定时器
-        const int64_t IDLE_EMOJI_ROTATION_INTERVAL_US = 30 * 1000 * 1000;  // 30秒轮播间隔
+        const int64_t IDLE_EMOJI_ROTATION_INTERVAL_US = 5 * 1000 * 1000;  // 5秒轮播间隔
         int idle_emoji_index_ = 0;  // 当前轮播表情索引
         bool is_playing_rotation_emoji_ = false;  // 是否正在播放列表中的表情
-        const int idle_emoji_list_[8] = {
-            MMAP_MOJI_EMOJI_DELICIOUS_AAF,    // 0
+        const int idle_emoji_list_[3] = {
+            // MMAP_MOJI_EMOJI_DELICIOUS_AAF,    // 0
             MMAP_MOJI_EMOJI_HAPPY_AAF,       // 1
-            MMAP_MOJI_EMOJI_CONFIDENT_AAF,  // 2
-            MMAP_MOJI_EMOJI_SAYHELLO_AAF,       // 3
-            MMAP_MOJI_EMOJI_LOOKAROUND_AAF, // 4
+            // MMAP_MOJI_EMOJI_CONFIDENT_AAF,  // 2
+            // MMAP_MOJI_EMOJI_SAYHELLO_AAF,       // 3
+            // MMAP_MOJI_EMOJI_LOOKAROUND_AAF, // 4
             MMAP_MOJI_EMOJI_WINKING_AAF,    // 5
             MMAP_MOJI_EMOJI_YAWNING_AAF,    // 6
-            MMAP_MOJI_EMOJI_COMFORT_AAF     // 7
+            // MMAP_MOJI_EMOJI_COMFORT_AAF     // 7
         };
     } vehicle_motion_state_;
 
@@ -214,6 +183,7 @@ private:
         TouchEventType type;
         int duration_ms;
     };
+
 
     static void TouchpadTimerCallback(void* arg) {
         MovecallMojiESP32S3* board = (MovecallMojiESP32S3*)arg;
@@ -240,7 +210,7 @@ private:
                 switch (current_state) {    
                     case kDeviceStateIdle:
                         // IDLE状态下恢复到DEFAULT表情
-                        widget->GetPlayer()->StartPlayer(MMAP_MOJI_EMOJI_DEFAULT_AAF, true, 2);
+                        widget->GetPlayer()->StartPlayer(MMAP_MOJI_EMOJI_RELAXED_AAF, true, 2);
                         ESP_LOGI("MovecallMojiESP32S3", "Switched back to DEFAULT emoji in IDLE state");
                         break;
                     case kDeviceStateListening:
@@ -248,7 +218,7 @@ private:
                     default:
                         // 停止IDLE表情轮播
                         board->StopIdleEmojiRotation();
-                        widget->GetPlayer()->StartPlayer(MMAP_MOJI_EMOJI_LISTENING_AAF, true, 2);
+                        widget->GetPlayer()->StartPlayer(MMAP_MOJI_EMOJI_WINKING_AAF, true, 2);
                         break;
                 }
             } else {
@@ -266,99 +236,8 @@ private:
             }
         }
     }
-    
-    static void GyroTimerCallback(void* arg) {
-        MovecallMojiESP32S3* board = (MovecallMojiESP32S3*)arg;
-        board->PollGyroscope();
-    }
 
-    // 底座探测任务：每秒发送一次 "L0" 指令，并读取串口返回
-    static void BaseProbeTask(void* arg) {
-        MovecallMojiESP32S3* board = static_cast<MovecallMojiESP32S3*>(arg);
-        const TickType_t delay = pdMS_TO_TICKS(1000);
-        for (;;) {
-            // 确保UART已初始化
-            if (!board->motor_uart_initialized_) {
-                board->InitializeMotorUart();
-            }
-            if (board->motor_uart_initialized_) {
-                // 向左步进0步用于探测
-                board->ControlMotor('L', 0);
 
-                // 读取一段时间内的返回
-                uint8_t buf[128];
-                int len = uart_read_bytes(MOJI_UART_PORT_NUM, buf, sizeof(buf) - 1, pdMS_TO_TICKS(120));
-                if (len > 0) {
-                    buf[len] = 0;
-                    bool on_rotating = (strstr((const char*)buf, "step") != nullptr);
-                    if (on_rotating) {
-                        if (board->placement_state_ != kPlacementRotatingBase) {
-                            ESP_LOGI(TAG, "Detected rotating base (uart contains 'step')");
-                            board->SetPlacementState(kPlacementRotatingBase);
-                        }
-                    } else {
-                        if (board->placement_state_ != kPlacementIndependent) {
-                            ESP_LOGI(TAG, "No 'step' found in uart response, switch to independent");
-                            board->SetPlacementState(kPlacementIndependent);
-                        }
-                    }
-                } else {
-                    // 没有数据也认为不在旋转底座
-                    if (board->placement_state_ != kPlacementIndependent) {
-                        ESP_LOGI(TAG, "No uart response, switch to independent");
-                        board->SetPlacementState(kPlacementIndependent);
-                    }
-                }
-            }
-            vTaskDelay(delay);
-        }
-    }
-
-    void SetPlacementState(PlacementState new_state) {
-        if (placement_state_ == new_state) return;
-        PlacementState old_state = placement_state_;
-        placement_state_ = new_state;
-        switch (placement_state_) {
-            case kPlacementIndependent:
-                ESP_LOGI(TAG, "Placement state -> Independent");
-                // 独立状态下不进行车辆动作检测
-                vehicle_motion_state_.detection_enabled = false;
-                // 从旋转底座返回独立 → 播放 loving + popup
-                if (old_state == kPlacementRotatingBase) {
-                    if (display_) {
-                        auto widget = static_cast<moji_anim::EmojiWidget*>(display_);
-                        if (widget && widget->GetPlayer()) {
-                            widget->GetPlayer()->StartPlayer(MMAP_MOJI_EMOJI_LOVING_AAF, true, 2);
-                        }
-                    }
-                    PlayLocalPrompt(Lang::Sounds::P3_POPUP, 2000000); // 2秒后关闭，配合LOVING动画
-                }
-                break;
-            case kPlacementRotatingBase:
-                ESP_LOGI(TAG, "Placement state -> RotatingBase");
-                // 允许车辆动作检测（稳定期结束后会自动启用）
-                // 不直接置true，仍由稳定期逻辑控制
-                // 从独立进入旋转底座 → 播放 safebelt + powerup
-                if (old_state == kPlacementIndependent) {
-                    // 执行电机复位命令
-                    ESP_LOGI(TAG, "Executing motor reset command on rotating base detection");
-                    ResetMotor();
-                    
-                    if (display_) {
-                        auto widget = static_cast<moji_anim::EmojiWidget*>(display_);
-                        if (widget && widget->GetPlayer()) {
-                            widget->GetPlayer()->StartPlayer(MMAP_MOJI_EMOJI_SAFEBELT_AAF, true, 2);
-                        }
-                    }
-                    PlayLocalPrompt(Lang::Sounds::P3_POWERUP, 2000000); // 2秒后关闭，配合SAFEBELT动画
-                }
-                break;
-            case kPlacementStaticBase:
-                ESP_LOGI(TAG, "Placement state -> StaticBase");
-                // 预留：根据需要调整检测策略
-                break;
-        }
-    }
     struct VehicleFeedbackCtx {
         MovecallMojiESP32S3* board;
         int aaf_id;
@@ -398,7 +277,12 @@ private:
     static void BMI270InitTimerCallback(void* arg) {
         MovecallMojiESP32S3* board = (MovecallMojiESP32S3*)arg;
         if (board) {
-            board->InitializeBmi270();
+            // Initialize the BMI270 sensor via the wrapper and register a data callback
+            if (!board->bmi_sensor_) board->bmi_sensor_ = std::make_unique<Bmi270Sensor>();
+            board->bmi_sensor_->Initialize(board->codec_i2c_bus_, [board](const Bmi270Sensor::SensorData& s){
+                if (board->motion_detector_) board->motion_detector_->OnSensorData(
+                    s.accel.x, s.accel.y, s.accel.z, s.gyro.x, s.gyro.y, s.gyro.z);
+            });
         }
     }
 
@@ -418,8 +302,9 @@ private:
                 board->PlayTimedEmoji(next_emoji);
                 
                 // 将索引移动到下一个表情
+                int len_emoji_list = 3;
                 board->vehicle_motion_state_.idle_emoji_index_ = 
-                    (board->vehicle_motion_state_.idle_emoji_index_ + 1) % 8;
+                    (board->vehicle_motion_state_.idle_emoji_index_ + 1) % len_emoji_list;
                 
                 // 启动定时器，30秒后切换到下一个表情
                 esp_timer_start_once(board->vehicle_motion_state_.idle_emoji_rotation_timer_, 
@@ -449,7 +334,7 @@ private:
         }
         
         // 切换回DEFAULT表情（循环播放）
-        widget->GetPlayer()->StartPlayer(MMAP_MOJI_EMOJI_DEFAULT_AAF, true, 2);
+        widget->GetPlayer()->StartPlayer(MMAP_MOJI_EMOJI_RELAXED_AAF, true, 2);
         vehicle_motion_state_.is_playing_rotation_emoji_ = false;
         
         ESP_LOGI(TAG, "Rotation emoji playback complete, switched back to DEFAULT emoji");
@@ -461,52 +346,6 @@ private:
         // 启动定时器，60秒后切换到下一个表情
         esp_timer_start_once(vehicle_motion_state_.idle_emoji_rotation_timer_, 
                            vehicle_motion_state_.IDLE_EMOJI_ROTATION_INTERVAL_US);
-    }
-    void InitializeMotorUart() {
-        if (motor_uart_initialized_) return;
-        uart_config_t uart_config = {
-            .baud_rate = MOJI_UART_BAUD_RATE,
-            .data_bits = UART_DATA_8_BITS,
-            .parity    = UART_PARITY_DISABLE,
-            .stop_bits = UART_STOP_BITS_1,
-            .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
-            .source_clk = UART_SCLK_DEFAULT,
-        };
-        int intr_alloc_flags = 0;
-        if (uart_driver_install(MOJI_UART_PORT_NUM, 1024, 0, 0, NULL, intr_alloc_flags) != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to install UART driver for motor");
-            return;
-        }
-        if (uart_param_config(MOJI_UART_PORT_NUM, &uart_config) != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to config UART for motor");
-            return;
-        }
-        if (uart_set_pin(MOJI_UART_PORT_NUM, MOJI_UART_TXD, MOJI_UART_RXD, MOJI_UART_RTS, MOJI_UART_CTS) != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to set UART pins for motor");
-            return;
-        }
-        motor_uart_initialized_ = true;
-    }
-
-    void SendMotorCommand(const char* cmd) {
-        if (!motor_uart_initialized_) InitializeMotorUart();
-        if (!motor_uart_initialized_) return;
-        size_t len = strlen(cmd);
-        uart_write_bytes(MOJI_UART_PORT_NUM, cmd, len);
-        ESP_LOGI(TAG, "Motor cmd: %s", cmd);
-    }
-
-    void ControlMotor(char direction, int steps) {
-        // direction: 'L' or 'R'
-        char buffer[16];
-        int n = snprintf(buffer, sizeof(buffer), "%c%d\r\n", direction, steps);
-        if (n > 0) {
-            SendMotorCommand(buffer);
-        }
-    }
-
-    void ResetMotor() {
-        SendMotorCommand("X\r\n");
     }
 
     // 本地提示音播放：在 Idle 下短暂开启输出，播放完成后自动关闭
@@ -689,267 +528,8 @@ private:
         }
     }
     
-    static inline float lsb_to_mps2(int16_t val, float g_range, uint8_t bit_width) {
-        double power = 2;
-        float half_scale = (float)((pow((double)power, (double)bit_width) / 2.0f));
-        return (9.80665f * val * g_range) / half_scale;
-    }
-    static inline float lsb_to_dps(int16_t val, float dps, uint8_t bit_width) {
-        double power = 2;
-        float half_scale = (float)((pow((double)power, (double)bit_width) / 2.0f));
-        return (dps / half_scale) * val;
-    }
-    void PollGyroscope() {
-        if (!gyro_initialized_ || bmi_handle_ == NULL) {
-            return;
-        }
-        struct bmi2_sens_data data = {};
-        struct bmi2_dev *dev = (struct bmi2_dev*)bmi_handle_;
-        int8_t rslt = bmi2_get_sensor_data(&data, dev);
-        if (rslt != 0) {
-            ESP_LOGW(TAG, "Failed to read BMI270 data, rslt=%d", (int)rslt);
-            return;
-        }
-        if (!((data.status & BMI2_DRDY_ACC) && (data.status & BMI2_DRDY_GYR))) {
-            return;
-        }
-        last_sensor_data_.accel.x = lsb_to_mps2(data.acc.x, 2.0f, 16);
-        last_sensor_data_.accel.y = lsb_to_mps2(data.acc.y, 2.0f, 16);
-        last_sensor_data_.accel.z = lsb_to_mps2(data.acc.z, 2.0f, 16);
-        last_sensor_data_.gyro.x = lsb_to_dps(data.gyr.x, 2000.0f, 16);
-        last_sensor_data_.gyro.y = lsb_to_dps(data.gyr.y, 2000.0f, 16);
-        last_sensor_data_.gyro.z = lsb_to_dps(data.gyr.z, 2000.0f, 16);
-        
-        // 处理车辆姿态检测
-        ProcessVehicleMotion();
-        
-        // 处理晃动检测（不受放置状态限制）
-        ProcessShakeDetection();
-        
-        // 通用运动检测已删除，只保留车辆姿态检测
-        // 周期性调试信息已注释掉
-        // static int debug_counter = 0;
-        // if (++debug_counter >= 50) {
-        //     ESP_LOGI(TAG, "BMI270 - Accel: %.2f,%.2f,%.2f | Gyro: %.2f,%.2f,%.2f",
-        //             last_sensor_data_.accel.x, last_sensor_data_.accel.y, last_sensor_data_.accel.z,
-        //             last_sensor_data_.gyro.x, last_sensor_data_.gyro.y, last_sensor_data_.gyro.z);
-        //     ESP_LOGI(TAG, "Vehicle Motion - Filtered Accel: %.3f,%.3f g | Filtered Gyro: %.1f deg/s",
-        //             vehicle_motion_state_.accel_x_filtered / 9.80665f, 
-        //             vehicle_motion_state_.accel_y_filtered / 9.80665f,
-        //             vehicle_motion_state_.gyro_magnitude_filtered);
-        //     debug_counter = 0;
-        // }
-    }
+    // Motion detection (vehicle posture & shake) moved to MotionDetector to decouple concerns.
 
-    // 车辆姿态检测相关函数
-    void ProcessVehicleMotion() {
-        int64_t current_time = esp_timer_get_time();
-        // 独立状态下不进行车辆动作检测
-        if (placement_state_ == kPlacementIndependent) {
-            return;
-        }
-        
-        // 设置初始化开始时间（仅在第一次调用时设置）
-        if (vehicle_motion_state_.init_start_time == 0) {
-            vehicle_motion_state_.init_start_time = current_time;
-            ESP_LOGI(TAG, "Vehicle motion detection starting, stabilization period: 5 seconds");
-        }
-        
-        // 检查是否还在稳定期内
-        if (current_time - vehicle_motion_state_.init_start_time < vehicle_motion_state_.INIT_STABILIZATION_US) {
-            // 稳定期内只进行数据积累，不进行检测
-            vehicle_motion_state_.accel_x_buffer.push_back(last_sensor_data_.accel.x);
-            vehicle_motion_state_.accel_y_buffer.push_back(last_sensor_data_.accel.y);
-            vehicle_motion_state_.gyro_z_buffer.push_back(last_sensor_data_.gyro.z);  // 使用Z轴陀螺仪
-            
-            // 为晃动检测添加X和Y轴陀螺仪数据
-            gyro_x_buffer.push_back(last_sensor_data_.gyro.x);
-            gyro_y_buffer.push_back(last_sensor_data_.gyro.y);
-            
-            // 保持缓冲区大小
-            if (vehicle_motion_state_.accel_x_buffer.size() > vehicle_motion_state_.BUFFER_SIZE) {
-                vehicle_motion_state_.accel_x_buffer.erase(vehicle_motion_state_.accel_x_buffer.begin());
-                vehicle_motion_state_.accel_y_buffer.erase(vehicle_motion_state_.accel_y_buffer.begin());
-                vehicle_motion_state_.gyro_z_buffer.erase(vehicle_motion_state_.gyro_z_buffer.begin());
-            }
-            
-            // 保持晃动检测缓冲区大小
-            if (gyro_x_buffer.size() > vehicle_motion_state_.BUFFER_SIZE) {
-                gyro_x_buffer.erase(gyro_x_buffer.begin());
-                gyro_y_buffer.erase(gyro_y_buffer.begin());
-            }
-            return;
-        }
-        
-        // 稳定期结束后启用检测
-        if (!vehicle_motion_state_.detection_enabled) {
-            vehicle_motion_state_.detection_enabled = true;
-            ESP_LOGI(TAG, "Vehicle motion detection enabled after stabilization period");
-        }
-        
-        // 将数据添加到缓冲区
-        vehicle_motion_state_.accel_x_buffer.push_back(last_sensor_data_.accel.x);
-        vehicle_motion_state_.accel_y_buffer.push_back(last_sensor_data_.accel.y);
-        vehicle_motion_state_.gyro_z_buffer.push_back(last_sensor_data_.gyro.z);  // 使用Z轴陀螺仪
-        
-        // 为晃动检测添加X和Y轴陀螺仪数据
-        gyro_x_buffer.push_back(last_sensor_data_.gyro.x);
-        gyro_y_buffer.push_back(last_sensor_data_.gyro.y);
-        
-        // 保持缓冲区大小
-        if (vehicle_motion_state_.accel_x_buffer.size() > vehicle_motion_state_.BUFFER_SIZE) {
-            vehicle_motion_state_.accel_x_buffer.erase(vehicle_motion_state_.accel_x_buffer.begin());
-            vehicle_motion_state_.accel_y_buffer.erase(vehicle_motion_state_.accel_y_buffer.begin());
-            vehicle_motion_state_.gyro_z_buffer.erase(vehicle_motion_state_.gyro_z_buffer.begin());
-        }
-        
-        // 保持晃动检测缓冲区大小
-        if (gyro_x_buffer.size() > vehicle_motion_state_.BUFFER_SIZE) {
-            gyro_x_buffer.erase(gyro_x_buffer.begin());
-            gyro_y_buffer.erase(gyro_y_buffer.begin());
-        }
-        
-        // 只有当缓冲区满了才进行滤波和检测
-        if (vehicle_motion_state_.accel_x_buffer.size() >= vehicle_motion_state_.BUFFER_SIZE) {
-            // 计算缓冲区内的平均值作为滤波结果
-            float sum_x = 0.0f, sum_y = 0.0f, sum_gz = 0.0f;
-            for (int i = 0; i < vehicle_motion_state_.BUFFER_SIZE; i++) {
-                sum_x += vehicle_motion_state_.accel_x_buffer[i];
-                sum_y += vehicle_motion_state_.accel_y_buffer[i];
-                sum_gz += vehicle_motion_state_.gyro_z_buffer[i];
-            }
-            
-            vehicle_motion_state_.accel_x_filtered = sum_x / vehicle_motion_state_.BUFFER_SIZE;
-            vehicle_motion_state_.accel_y_filtered = sum_y / vehicle_motion_state_.BUFFER_SIZE;
-            vehicle_motion_state_.gyro_z_filtered = sum_gz / vehicle_motion_state_.BUFFER_SIZE;
-            
-            // 检查动画冷却时间
-            if (current_time - vehicle_motion_state_.last_animation_time < vehicle_motion_state_.ANIMATION_COOLDOWN_US) {
-                return;
-            }
-            
-            // 检测车辆姿态（只有在缓冲区满了才检测）
-            DetectVehiclePosture(current_time);
-        }
-    }
-
-    void DetectVehiclePosture(int64_t current_time) {
-        // 如果正在播放动画和声音，不响应新的车辆动作检测
-        if (is_playing_animation_) {
-            ESP_LOGD(TAG, "Animation playing, skipping vehicle posture detection");
-            return;
-        }
-        
-        const float ACCEL_X_THRESHOLD_ACCEL = 0.3f * 9.80665f;  // 0.3g in m/s² (加速)
-        const float ACCEL_X_THRESHOLD_BRAKE = 0.6f * 9.80665f;  // 0.6g in m/s² (刹车)
-        const float GYRO_Z_THRESHOLD = 10.0f;  // 10°/s (Z轴角速度阈值)
-        
-        // 检测加速 (根据坐标系修正：ax < -阈值)
-        if (vehicle_motion_state_.accel_x_filtered < -ACCEL_X_THRESHOLD_ACCEL) {
-            ESP_LOGI(TAG, "Vehicle accelerating: ax=%.3f g (neg axis)", vehicle_motion_state_.accel_x_filtered / 9.80665f);
-            // 仅在 Idle 下触发，不切换设备状态
-            if (Application::GetInstance().GetDeviceState() == kDeviceStateIdle) {
-                PlayTimedEmoji(MMAP_MOJI_EMOJI_SPEEDING_AAF);
-                // 声音早于动画结束：略短于动画时长
-                PlayLocalPrompt(Lang::Sounds::P3_SPEEDING, vehicle_motion_state_.ANIMATION_PLAY_DURATION_US - 100000);
-            }
-            return;
-        }
-        
-        // 检测刹车 (根据坐标系修正：ax > +阈值)
-        if (vehicle_motion_state_.accel_x_filtered > ACCEL_X_THRESHOLD_BRAKE) {
-            ESP_LOGI(TAG, "Vehicle braking: ax=%.3f g (pos axis)", vehicle_motion_state_.accel_x_filtered / 9.80665f);
-            if (Application::GetInstance().GetDeviceState() == kDeviceStateIdle) {
-                PlayTimedEmoji(MMAP_MOJI_EMOJI_BRAKING_AAF);
-                // 声音早于动画结束：略短于动画时长
-                PlayLocalPrompt(Lang::Sounds::P3_BRAKING, vehicle_motion_state_.ANIMATION_PLAY_DURATION_US - 100000);
-            }
-            return;
-        }
-        
-        // 检测左转 (gyro_z > 10°/s) - 使用陀螺仪Z轴角速度
-        if (vehicle_motion_state_.gyro_z_filtered > GYRO_Z_THRESHOLD) {
-            ESP_LOGI(TAG, "Vehicle turning left: gz=%.1f deg/s", vehicle_motion_state_.gyro_z_filtered);
-            if (Application::GetInstance().GetDeviceState() == kDeviceStateIdle) {
-                PlayTimedEmoji(MMAP_MOJI_EMOJI_TURNLEFT_AAF);
-                // 声音早于动画结束：略短于动画时长
-                PlayLocalPrompt(Lang::Sounds::P3_TURN, vehicle_motion_state_.ANIMATION_PLAY_DURATION_US - 100000);
-            }
-            return;
-        }
-        
-        // 检测右转 (gyro_z < -10°/s) - 使用陀螺仪Z轴角速度
-        if (vehicle_motion_state_.gyro_z_filtered < -GYRO_Z_THRESHOLD) {
-            ESP_LOGI(TAG, "Vehicle turning right: gz=%.1f deg/s", vehicle_motion_state_.gyro_z_filtered);
-            if (Application::GetInstance().GetDeviceState() == kDeviceStateIdle) {
-                PlayTimedEmoji(MMAP_MOJI_EMOJI_TURNRIGHT_AAF);
-                // 声音早于动画结束：略短于动画时长
-                PlayLocalPrompt(Lang::Sounds::P3_TURN, vehicle_motion_state_.ANIMATION_PLAY_DURATION_US - 100000);
-            }
-            return;
-        }
-        
-        // 堵车检测功能已删除
-    }
-
-    void DetectShake(int64_t current_time) {
-        // 如果正在播放动画和声音，不响应新的晃动检测
-        if (is_playing_animation_) {
-            ESP_LOGD(TAG, "Animation playing, skipping shake detection");
-            return;
-        }
-        
-        // 检查晃动冷却时间
-        if (current_time - vehicle_motion_state_.last_shake_animation_time < vehicle_motion_state_.SHAKE_COOLDOWN_US) {
-            return;
-        }
-        
-        // 计算所有三个轴的陀螺仪数据的总幅度（晃动强度）
-        float gyro_x = last_sensor_data_.gyro.x;
-        float gyro_y = last_sensor_data_.gyro.y;
-        float gyro_z = last_sensor_data_.gyro.z;
-        
-        // 计算晃动强度（所有三个轴的总幅度）
-        float shake_intensity = sqrt(gyro_x * gyro_x + gyro_y * gyro_y + gyro_z * gyro_z);
-        
-        // 检查是否超过晃动阈值
-        if (shake_intensity > vehicle_motion_state_.SHAKE_THRESHOLD) {
-            if (!vehicle_motion_state_.is_shaking) {
-                // 开始晃动
-                vehicle_motion_state_.is_shaking = true;
-                vehicle_motion_state_.shake_start_time = current_time;
-                ESP_LOGI(TAG, "Independent shake started: intensity=%.1f deg/s", shake_intensity);
-            } else {
-                // 持续晃动，检查是否超过3秒
-                int64_t shake_duration = current_time - vehicle_motion_state_.shake_start_time;
-                if (shake_duration >= vehicle_motion_state_.SHAKE_DETECTION_DURATION_US) {
-                    ESP_LOGI(TAG, "Independent shake detected for %.1f seconds, intensity=%.1f deg/s", 
-                            shake_duration / 1000000.0f, shake_intensity);
-                    
-                    // 仅在 Idle 下触发，不切换设备状态
-                    if (Application::GetInstance().GetDeviceState() == kDeviceStateIdle) {
-                        PlayTimedEmoji(MMAP_MOJI_EMOJI_DIZZY_AAF);
-                        // 播放晃动音效，延迟4秒关闭
-                        PlayLocalPrompt(Lang::Sounds::P3_VIBRATION, vehicle_motion_state_.ANIMATION_PLAY_DURATION_US - 100000);
-                        
-                        // 更新晃动动画时间
-                        vehicle_motion_state_.last_shake_animation_time = current_time;
-                    }
-                    
-                    // 重置晃动状态
-                    vehicle_motion_state_.is_shaking = false;
-                    vehicle_motion_state_.shake_start_time = 0;
-                }
-            }
-        } else {
-            // 晃动强度不够，重置晃动状态
-            if (vehicle_motion_state_.is_shaking) {
-                ESP_LOGD(TAG, "Independent shake stopped: intensity=%.1f deg/s", shake_intensity);
-                vehicle_motion_state_.is_shaking = false;
-                vehicle_motion_state_.shake_start_time = 0;
-            }
-        }
-    }
 
     // 统一的表情播放（定时自动恢复），供车辆检测与放置状态切换复用
     void PlayTimedEmoji(int aaf_id) {
@@ -972,8 +552,10 @@ private:
         
         // 播放动画（循环播放）
         widget->GetPlayer()->StartPlayer(aaf_id, true, 2);
-        ESP_LOGI(TAG, "Playing emoji animation: %d (loop play)", aaf_id);
-        
+        // widget->GetPlayer()->PlayOnce(aaf_id, 2, nullptr);
+        // ESP_LOGI(TAG, "Playing emoji animation: %d (loop play)", aaf_id);
+        ESP_LOGI(TAG, "Playing emoji animation: %d (play once)", aaf_id);
+
         // 启动定时器，2秒后切换回默认表情
         if (vehicle_motion_state_.emoji_switch_timer_ == nullptr) {
             esp_timer_create_args_t timer_args = {
@@ -986,12 +568,114 @@ private:
             esp_timer_create(&timer_args, &vehicle_motion_state_.emoji_switch_timer_);
         }
         
-        // 停止之前的定时器并启动新的
-        esp_timer_stop(vehicle_motion_state_.emoji_switch_timer_);
-        esp_timer_start_once(vehicle_motion_state_.emoji_switch_timer_, 2 * 1000 * 1000); // 2秒后切换
+        // // 停止之前的定时器并启动新的
+        // esp_timer_stop(vehicle_motion_state_.emoji_switch_timer_);
+        // esp_timer_start_once(vehicle_motion_state_.emoji_switch_timer_, 2 * 1000 * 1000); // 2秒后切换
     }
-    
-    
+
+    void OnPlacementChanged(BaseController::PlacementState newState, BaseController::PlacementState oldState){
+        // Map to previous behavior: enable/disable vehicle detection and play UI/sounds
+        if (newState == BaseController::kPlacementIndependent) {
+            vehicle_motion_state_.detection_enabled = false;
+            if (oldState == BaseController::kPlacementRotatingBase) {
+                if (display_) {
+                    auto widget = static_cast<moji_anim::EmojiWidget*>(display_);
+                    if (widget && widget->GetPlayer()) {
+                        widget->GetPlayer()->StartPlayer(MMAP_MOJI_EMOJI_WINKING_AAF, true, 2);
+                    }
+                }
+                PlayLocalPrompt(Lang::Sounds::P3_POPUP, 2000000);
+            }
+            if (motion_detector_) motion_detector_->SetPlacementIndependent(true);
+        } else if (newState == BaseController::kPlacementRotatingBase) {
+            if (oldState == BaseController::kPlacementIndependent) {
+                if (base_controller_) base_controller_->ResetMotor();
+                if (display_) {
+                    auto widget = static_cast<moji_anim::EmojiWidget*>(display_);
+                    if (widget && widget->GetPlayer()) {
+                        widget->GetPlayer()->StartPlayer(MMAP_MOJI_EMOJI_SAFEBELT_AAF, true, 2);
+                    }
+                }
+                PlayLocalPrompt(Lang::Sounds::P3_POWERUP, 2000000);
+            }
+            if (motion_detector_) motion_detector_->SetPlacementIndependent(false);
+        }
+    }
+
+    // 车辆姿态事件处理
+    void OnMotionEvent(MotionDetector::MotionEvent ev) {
+        // Board handles gating and playback
+        if (is_playing_animation_) {
+            ESP_LOGD(TAG, "Animation playing, skipping motion event");
+            return;
+        }
+        DeviceState current_state = Application::GetInstance().GetDeviceState();
+        if (current_state != kDeviceStateIdle) {
+            ESP_LOGD(TAG, "Device not idle, skipping motion event");
+            return;
+        }
+
+        const std::string_view* sound = nullptr;
+        int aaf_id = MMAP_MOJI_EMOJI_RELAXED_AAF;
+        switch (ev) {
+            case MotionDetector::MotionEvent::Speeding:
+                sound = &Lang::Sounds::P3_SPEEDING;
+                aaf_id =  MMAP_MOJI_EMOJI_SPEEDING_AAF;
+                break;
+            case MotionDetector::MotionEvent::Braking:
+                sound = &Lang::Sounds::P3_BRAKING;
+                aaf_id =  MMAP_MOJI_EMOJI_BRAKING_AAF;
+                break;
+            case MotionDetector::MotionEvent::TurnLeft:
+                sound = &Lang::Sounds::P3_TURN;
+                aaf_id =  MMAP_MOJI_EMOJI_TURNLEFT_AAF;
+                break;
+            case MotionDetector::MotionEvent::TurnRight:
+                sound = &Lang::Sounds::P3_TURN;
+                aaf_id =  MMAP_MOJI_EMOJI_TURNRIGHT_AAF;
+                break;
+        }
+
+        is_playing_animation_ = true;
+        PlayTimedEmoji(aaf_id);
+        if (sound) PlayLocalPrompt(*sound, vehicle_motion_state_.ANIMATION_PLAY_DURATION_US - 100000);
+
+        // ensure emoji switch timer will clear the playing flag
+        if (vehicle_motion_state_.emoji_switch_timer_ == nullptr) {
+            esp_timer_create_args_t timer_args = {
+                .callback = EmojiSwitchTimerCallback,
+                .arg = this,
+                .dispatch_method = ESP_TIMER_TASK,
+                .name = "emoji_switch_timer",
+                .skip_unhandled_events = true,
+            };
+            esp_timer_create(&timer_args, &vehicle_motion_state_.emoji_switch_timer_);
+        }
+        esp_timer_stop(vehicle_motion_state_.emoji_switch_timer_);
+        esp_timer_start_once(vehicle_motion_state_.emoji_switch_timer_, vehicle_motion_state_.ANIMATION_PLAY_DURATION_US);
+    }
+
+    // 晃动事件处理
+    void OnShakeEvent() {
+        if (is_playing_animation_) return; // 正在播放动画，跳过
+        DeviceState current_state = Application::GetInstance().GetDeviceState();
+        if (current_state != kDeviceStateIdle) return;
+        is_playing_animation_ = true;
+        PlayTimedEmoji(MMAP_MOJI_EMOJI_DIZZY_AAF);
+        PlayLocalPrompt(Lang::Sounds::P3_VIBRATION, vehicle_motion_state_.ANIMATION_PLAY_DURATION_US - 100000);
+        if (vehicle_motion_state_.emoji_switch_timer_ == nullptr) {
+            esp_timer_create_args_t timer_args = {
+                .callback = EmojiSwitchTimerCallback,
+                .arg = this,
+                .dispatch_method = ESP_TIMER_TASK,
+                .name = "emoji_switch_timer",
+                .skip_unhandled_events = true,
+            };
+            esp_timer_create(&timer_args, &vehicle_motion_state_.emoji_switch_timer_);
+        }
+        esp_timer_stop(vehicle_motion_state_.emoji_switch_timer_);
+        esp_timer_start_once(vehicle_motion_state_.emoji_switch_timer_, vehicle_motion_state_.ANIMATION_PLAY_DURATION_US);
+    }
 
     
 
@@ -1013,128 +697,7 @@ private:
         ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_bus_cfg, &codec_i2c_bus_));
     }
     
-    void InitializeBmi270() {
-        ESP_LOGI(TAG, "Initializing BMI270 gyroscope (official driver)...");
-
-        // 复用已存在的 IDF I2C master 总线 (codec_i2c_bus_)，为 BMI270 创建设备句柄
-        i2c_device_config_t dev_cfg = {
-            .dev_addr_length = I2C_ADDR_BIT_LEN_7,
-            .device_address = BMI270_I2C_ADDR,
-            .scl_speed_hz = BMI270_I2C_FREQ_HZ,
-        };
-        esp_err_t err = i2c_master_bus_add_device(codec_i2c_bus_, &dev_cfg, &bmi_idf_dev_);
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to add BMI270 device to existing I2C bus: %s", esp_err_to_name(err));
-            return;
-        }
-
-        // 用 BMI2 低层 API 适配 IDF 的 i2c_master 接口
-        static struct bmi2_dev bmi2_dev_ctx = {};
-        bmi2_dev_ctx = {};
-        bmi2_dev_ctx.intf = BMI2_I2C_INTF;
-        bmi2_dev_ctx.read = [](uint8_t reg_addr, uint8_t *data, uint32_t len, void *intf_ptr) -> int8_t {
-            i2c_master_dev_handle_t dev = (i2c_master_dev_handle_t)intf_ptr;
-            esp_err_t e = i2c_master_transmit_receive(dev, &reg_addr, 1, data, len, 1000);
-            return (e == ESP_OK) ? 0 : -1;
-        };
-        bmi2_dev_ctx.write = [](uint8_t reg_addr, const uint8_t *data, uint32_t len, void *intf_ptr) -> int8_t {
-            i2c_master_dev_handle_t dev = (i2c_master_dev_handle_t)intf_ptr;
-            uint8_t buf[1 + 32];
-            if (len <= 32) {
-                buf[0] = reg_addr;
-                memcpy(&buf[1], data, len);
-                esp_err_t e = i2c_master_transmit(dev, buf, 1 + len, 1000);
-                return (e == ESP_OK) ? 0 : -1;
-            }
-            uint8_t *dyn = (uint8_t*)malloc(1 + len);
-            if (!dyn) return -1;
-            dyn[0] = reg_addr;
-            memcpy(&dyn[1], data, len);
-            esp_err_t e = i2c_master_transmit(dev, dyn, 1 + len, 1000);
-            free(dyn);
-            return (e == ESP_OK) ? 0 : -1;
-        };
-        bmi2_dev_ctx.delay_us = [](uint32_t period, void * /*intf_ptr*/) { esp_rom_delay_us(period); };
-        bmi2_dev_ctx.intf_ptr = (void*)bmi_idf_dev_;
-        bmi2_dev_ctx.read_write_len = 32;
-        bmi2_dev_ctx.config_file_ptr = NULL;
-
-        int8_t rslt = bmi270_init(&bmi2_dev_ctx);
-        if (rslt != 0) {
-            ESP_LOGE(TAG, "bmi270_init failed: %d", (int)rslt);
-            return;
-        }
-        // 保存句柄供后续调用
-        bmi_handle_ = (bmi270_handle_t)&bmi2_dev_ctx;
-        
-        struct bmi2_sens_config config[2];
-        config[0].type = BMI2_ACCEL;
-        config[1].type = BMI2_GYRO;
-        // 从 bmi2_dev 获取配置
-        struct bmi2_dev *dev = (struct bmi2_dev*)bmi_handle_;
-        rslt = bmi2_get_sensor_config(config, 2, dev);
-        if (rslt != 0) {
-            ESP_LOGE(TAG, "bmi2_get_sensor_config failed: %d", (int)rslt);
-            return;
-        }
-
-        config[0].cfg.acc.odr = BMI2_ACC_ODR_200HZ;
-        config[0].cfg.acc.range = BMI2_ACC_RANGE_2G;
-        config[0].cfg.acc.bwp = BMI2_ACC_NORMAL_AVG4;
-        config[0].cfg.acc.filter_perf = BMI2_PERF_OPT_MODE;
-        config[1].cfg.gyr.odr = BMI2_GYR_ODR_200HZ;
-        config[1].cfg.gyr.range = BMI2_GYR_RANGE_2000;
-        config[1].cfg.gyr.bwp = BMI2_GYR_NORMAL_MODE;
-        config[1].cfg.gyr.noise_perf = BMI2_POWER_OPT_MODE;
-        config[1].cfg.gyr.filter_perf = BMI2_PERF_OPT_MODE;
-
-        rslt = bmi2_set_sensor_config(config, 2, dev);
-        if (rslt != 0) {
-            ESP_LOGE(TAG, "bmi2_set_sensor_config failed: %d", (int)rslt);
-            return;
-        }
-
-        uint8_t sensor_list[2] = { BMI2_ACCEL, BMI2_GYRO };
-        rslt = bmi2_sensor_enable(sensor_list, 2, dev);
-        if (rslt != 0) {
-            ESP_LOGE(TAG, "bmi2_sensor_enable failed: %d", (int)rslt);
-            return;
-        }
-
-        esp_timer_create_args_t gyro_timer_args = {
-            .callback = GyroTimerCallback,
-            .arg = this,
-            .dispatch_method = ESP_TIMER_TASK,
-            .name = "gyro_timer",
-            .skip_unhandled_events = true,
-        };
-        err = esp_timer_create(&gyro_timer_args, &gyro_timer_);
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to create gyro timer: %s", esp_err_to_name(err));
-            return;
-        }
-        err = esp_timer_start_periodic(gyro_timer_, 10 * 1000);  // 改为10ms轮询，提高检测精度
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to start gyro timer: %s", esp_err_to_name(err));
-            esp_timer_delete(gyro_timer_);
-            return;
-        }
-        
-        gyro_initialized_ = true;
-        ESP_LOGI(TAG, "BMI270 gyroscope initialized successfully (official)");
-        ESP_LOGI(TAG, "Vehicle motion detection configured with thresholds:");
-        ESP_LOGI(TAG, "  - Acceleration X: 0.3g (accelerate) / 0.6g (brake) - Rotating base only");
-        ESP_LOGI(TAG, "  - Gyroscope Z: ±10°/s (left/right turn) - Rotating base only");
-        ESP_LOGI(TAG, "  - Shake detection: 15°/s threshold, 3s duration - All placement states");
-        ESP_LOGI(TAG, "  - Animation cooldown: 3 seconds");
-        ESP_LOGI(TAG, "  - Shake cooldown: 5 seconds");
-        ESP_LOGI(TAG, "  - Animation mode: Loop play with 4s timer switch");
-        ESP_LOGI(TAG, "  - IDLE emoji rotation: 60s interval, 8 emojis");
-        ESP_LOGI(TAG, "  - Base detection: SAFEBELT emoji + POWERUP sound");
-        ESP_LOGI(TAG, "  - Sampling rate: 200Hz, Polling interval: 10ms");
-        ESP_LOGI(TAG, "  - Stabilization period: 5 seconds (detection disabled during startup)");
-        ESP_LOGI(TAG, "  - Data buffer: 10 samples (100ms window)");
-    }
+    // BMI270 initialization moved into Bmi270Sensor wrapper (gyro_sensor.cc)
 
     // SPI初始化
     void InitializeSpi() {
@@ -1427,7 +990,30 @@ public:
         InitializeTouchPad();  // 初始化触摸传感器（非触摸屏触控）
         InitializeButtons();
         InitializeIot();
-        InitializeMotorUart();
+
+        // Create and initialize base controller (wraps motor controller and base probing)
+        base_controller_ = std::make_unique<BaseController>();
+        base_controller_->Initialize();
+
+        // Create motion detector and provide simple event callbacks into this board
+        motion_detector_ = std::make_unique<MotionDetector>(
+            [this](MotionDetector::MotionEvent ev) {
+                OnMotionEvent(ev);
+            },
+            [this]() {
+                OnShakeEvent();
+            }
+        );
+
+        // Register placement change callback so board UI/sound reacts to base events
+        if (base_controller_) {
+            base_controller_->SetPlacementChangedCallback(
+                [this](BaseController::PlacementState newState, BaseController::PlacementState oldState) {
+                    OnPlacementChanged(newState, oldState);
+                }
+            );
+            base_controller_->StartProbeTask();
+        }
 
         // 延后初始化BMI270，避免与编解码器I2C初始化阶段冲突
         esp_timer_create_args_t bmi_init_args = {
@@ -1442,11 +1028,7 @@ public:
             esp_timer_start_once(bmi270_init_timer_, 1500 * 1000);
         }
 
-        // 启动底座探测任务
-        BaseType_t rt = xTaskCreate(BaseProbeTask, "base_probe_task", 3072, this, 1, &base_probe_task_handle_);
-        if (rt != pdPASS) {
-            ESP_LOGE(TAG, "Failed to create base probe task");
-        }
+        // BaseController handles base probing (task started in BaseController)
     }
 
     virtual Led* GetLed() override {
@@ -1493,13 +1075,17 @@ public:
         return true;
     }
 
-    // Moji motor MCP hooks
+    // base motor control
     void MojiControlMotor(char direction, int steps) override {
         if (direction != 'L' && direction != 'R') return;
-        ControlMotor(direction, steps);
+        if (!base_controller_) base_controller_ = std::make_unique<BaseController>();
+        if (!base_controller_->IsInitialized()) base_controller_->Initialize();
+        if (base_controller_->IsInitialized()) base_controller_->ControlMotor(direction, steps);
     }
     void MojiResetMotor() override {
-        ResetMotor();
+        if (!base_controller_) base_controller_ = std::make_unique<BaseController>();
+        if (!base_controller_->IsInitialized()) base_controller_->Initialize();
+        if (base_controller_->IsInitialized()) base_controller_->ResetMotor();
     }
 
     // IDLE状态表情轮播管理函数
@@ -1538,7 +1124,7 @@ public:
         vehicle_motion_state_.is_playing_rotation_emoji_ = false;
         
         // 播放DEFAULT表情（循环播放）
-        widget->GetPlayer()->StartPlayer(MMAP_MOJI_EMOJI_DEFAULT_AAF, true, 2);
+        widget->GetPlayer()->StartPlayer(MMAP_MOJI_EMOJI_RELAXED_AAF, true, 2);
         
         ESP_LOGI(TAG, "Started IDLE emoji rotation with DEFAULT emoji");
         ESP_LOGI(TAG, "IDLE emoji rotation interval: %lld us (30 seconds)", 
@@ -1558,67 +1144,7 @@ public:
         }
     }
 
-    // 独立的晃动检测函数（不受放置状态限制）
-    void ProcessShakeDetection() {
-        int64_t current_time = esp_timer_get_time();
-        
-        // 如果正在播放动画和声音，不响应新的晃动检测
-        if (is_playing_animation_) {
-            ESP_LOGD(TAG, "Animation playing, skipping independent shake detection");
-            return;
-        }
-        
-        // 检查晃动冷却时间
-        if (current_time - vehicle_motion_state_.last_shake_animation_time < vehicle_motion_state_.SHAKE_COOLDOWN_US) {
-            return;
-        }
-        
-        // 计算所有三个轴的陀螺仪数据的总幅度（晃动强度）
-        float gyro_x = last_sensor_data_.gyro.x;
-        float gyro_y = last_sensor_data_.gyro.y;
-        float gyro_z = last_sensor_data_.gyro.z;
-        
-        // 计算晃动强度（所有三个轴的总幅度）
-        float shake_intensity = sqrt(gyro_x * gyro_x + gyro_y * gyro_y + gyro_z * gyro_z);
-        
-        // 检查是否超过晃动阈值
-        if (shake_intensity > vehicle_motion_state_.SHAKE_THRESHOLD) {
-            if (!vehicle_motion_state_.is_shaking) {
-                // 开始晃动
-                vehicle_motion_state_.is_shaking = true;
-                vehicle_motion_state_.shake_start_time = current_time;
-                ESP_LOGI(TAG, "Independent shake started: intensity=%.1f deg/s", shake_intensity);
-            } else {
-                // 持续晃动，检查是否超过3秒
-                int64_t shake_duration = current_time - vehicle_motion_state_.shake_start_time;
-                if (shake_duration >= vehicle_motion_state_.SHAKE_DETECTION_DURATION_US) {
-                    ESP_LOGI(TAG, "Independent shake detected for %.1f seconds, intensity=%.1f deg/s", 
-                            shake_duration / 1000000.0f, shake_intensity);
-                    
-                    // 仅在 Idle 下触发，不切换设备状态
-                    if (Application::GetInstance().GetDeviceState() == kDeviceStateIdle) {
-                        PlayTimedEmoji(MMAP_MOJI_EMOJI_DIZZY_AAF);
-                        // 播放晃动音效，延迟4秒关闭
-                        PlayLocalPrompt(Lang::Sounds::P3_VIBRATION, vehicle_motion_state_.ANIMATION_PLAY_DURATION_US - 100000);
-                        
-                        // 更新晃动动画时间
-                        vehicle_motion_state_.last_shake_animation_time = current_time;
-                    }
-                    
-                    // 重置晃动状态
-                    vehicle_motion_state_.is_shaking = false;
-                    vehicle_motion_state_.shake_start_time = 0;
-                }
-            }
-        } else {
-            // 晃动强度不够，重置晃动状态
-            if (vehicle_motion_state_.is_shaking) {
-                ESP_LOGD(TAG, "Independent shake stopped: intensity=%.1f deg/s", shake_intensity);
-                vehicle_motion_state_.is_shaking = false;
-                vehicle_motion_state_.shake_start_time = 0;
-            }
-        }
-    }
+    // Independent shake detection moved into MotionDetector
 };
 
 DECLARE_BOARD(MovecallMojiESP32S3);

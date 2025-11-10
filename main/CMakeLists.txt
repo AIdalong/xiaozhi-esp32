@@ -266,6 +266,7 @@ idf_component_register(SRCS ${SOURCES}
                     INCLUDE_DIRS ${INCLUDE_DIRS}
                     WHOLE_ARCHIVE
                     )
+# target_add_binary_data(${COMPONENT_TARGET} "../build/mmap_build/moji_emoji/assets_A/assets_A.bin" BINARY)
 
 # 注意：在 ESP-IDF 中，add_dependencies 可能不被支持
 # 我们通过将 lang_header 作为 EMBED_FILES 的依赖来实现自动重建
@@ -347,9 +348,10 @@ if(CONFIG_BOARD_TYPE_MOVECALL_MOJI_ESP32S3)
     endforeach()
 
     spiffs_create_partition_assets(
-        assets_A
+        ota_0
         ${SPIFFS_DIR}
         FLASH_IN_PROJECT
+        FLASH_APPEND_APP
         MMAP_FILE_SUPPORT_FORMAT ".aaf"
     )
 endif()

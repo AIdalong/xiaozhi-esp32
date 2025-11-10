@@ -21,6 +21,7 @@
 #include <wifi_configuration_ap.h>
 #include <ssid_manager.h>
 #include "afsk_demod.h"
+#include "ble_broadcaster.h"
 
 static const char *TAG = "WifiBoard";
 
@@ -56,11 +57,20 @@ void WifiBoard::EnterWifiConfigMode() {
     // 播报配置 WiFi 的提示
     application.Alert(Lang::Strings::WIFI_CONFIG_MODE, hint.c_str(), "", Lang::Sounds::P3_WIFICONFIG);
 
-    #if USE_ACOUSTIC_WIFI_PROVISIONING
+    // start ble broadcast with custom payload
+    BleBroadcaster::GetInstance().StartCustom();
+
+
+
+    // #if USE_ACOUSTIC_WIFI_PROVISIONING
+    #if 1 // temporarily force enable
+    ESP_LOGI(TAG, "Starting acoustic WiFi provisioning...");
     audio_wifi_config::ReceiveWifiCredentialsFromAudio(&application, &wifi_ap);
+    ESP_LOGI(TAG, "Acoustic WiFi provisioning ended.");
     #endif
     
     // Wait forever until reset after configuration
+    ESP_LOGI(TAG, "Entering WiFi configuration mode, waiting for user to configure WiFi...");
     while (true) {
         int free_sram = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
         int min_free_sram = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL);

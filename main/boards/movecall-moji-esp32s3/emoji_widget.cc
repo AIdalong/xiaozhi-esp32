@@ -6,6 +6,12 @@
 #include "mmap_generate_moji_emoji.h"
 #include "config.h"
 
+#include <functional>
+#include <tuple>
+#include <unordered_map>
+#include <string>
+#include <utility>
+
 #include <esp_lcd_panel_io.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -41,7 +47,7 @@ EmojiPlayer::EmojiPlayer(esp_lcd_panel_handle_t panel, esp_lcd_panel_io_handle_t
 {
     ESP_LOGI(TAG, "Create EmojiPlayer, panel: %p, panel_io: %p", panel, panel_io);
     const mmap_assets_config_t assets_cfg = {
-        .partition_label = "assets_A",
+        .partition_label = "ota_0",
         .max_files = MMAP_MOJI_EMOJI_FILES,
         .checksum = MMAP_MOJI_EMOJI_CHECKSUM,
         .flags = {.mmap_enable = true, .full_check = true}
@@ -81,10 +87,40 @@ EmojiPlayer::~EmojiPlayer()
     }
 }
 
+void EmojiPlayer::PlayOnce(int aaf, int fps, std::function<void()> on_complete)
+{
+    if (player_handle_) {
+
+        uint32_t start, end;
+        const void *src_data;
+        size_t src_len;
+
+        src_data = mmap_assets_get_mem(assets_handle_, aaf);
+        src_len = mmap_assets_get_size(assets_handle_, aaf);
+
+    anim_player_set_src_data(player_handle_, src_data, src_len);
+        anim_player_get_segment(player_handle_, &start, &end);
+        anim_player_set_segment(player_handle_, start, end, fps, false);
+        anim_player_update(player_handle_, PLAYER_ACTION_START);
+
+        // 获取动画帧总宽高（假设每帧分块x_start=0, x_end=width, y_start=0, y_end=height）
+        // 这里用anim_player_get_width/height等API，如果没有则在OnFlush首块记录
+        // 先清零偏移
+        x_offset_ = 0;
+        y_offset_ = 0;
+
+        // store completion callback (may be empty)
+        play_once_callback_ = std::move(on_complete);
+    }
+}
+
+
+
 void EmojiPlayer::StartPlayer(int aaf, bool repeat, int fps)
 {
     if (player_handle_) {
-        // 单次播放恢复逻辑已删除
+        // 单次播放恢复逻辑s
+
         
         // 已移除全屏清黑色代码
         uint32_t start, end;
@@ -107,6 +143,9 @@ void EmojiPlayer::StartPlayer(int aaf, bool repeat, int fps)
         // 先清零偏移
         x_offset_ = 0;
         y_offset_ = 0;
+
+
+
     }
 }
 
@@ -127,17 +166,31 @@ void EmojiPlayer::OnUpdate(anim_player_handle_t handle, player_event_t event)
     switch (event) {
         case PLAYER_EVENT_ONE_FRAME_DONE:
             // 单帧播放完成，不需要特殊处理
+            // ESP_LOGI(TAG, "EmojiPlayer: One frame done");
             break;
             
         case PLAYER_EVENT_ALL_FRAME_DONE:
-            // 所有帧播放完成
+            // 所有帧播放完成 — if PlayOnce had a completion callback, invoke it and clear
+            // ESP_LOGI(TAG, "EmojiPlayer: All frames done");
+            if (self->play_once_callback_) {
+                // move it out and clear to avoid reentrancy issues
+                auto cb = std::move(self->play_once_callback_);
+                self->play_once_callback_ = {};
+                try {
+                    cb();
+                } catch (...) {
+                    ESP_LOGW(TAG, "PlayOnce callback threw an exception");
+                }
+            }
             break;
             
         case PLAYER_EVENT_IDLE:
+            // ESP_LOGI(TAG, "EmojiPlayer: Idle");
             // 播放器进入空闲状态
             break;
             
         default:
+            // ESP_LOGI(TAG, "EmojiPlayer: Unknown event");
             break;
     }
 }
@@ -161,23 +214,23 @@ void EmojiWidget::SetEmotion(const char* emotion)
     using Param = std::tuple<int, bool, int>;
     static const std::unordered_map<std::string, Param> emotion_map = {
         {"happy",       {MMAP_MOJI_EMOJI_HAPPY_AAF, true, EMOJI_FPS}},
-        {"laughing",    {MMAP_MOJI_EMOJI_LAUGHING_AAF, true, EMOJI_FPS}},
-        {"funny",       {MMAP_MOJI_EMOJI_FUNNY_AAF, true, EMOJI_FPS}},
-        {"loving",      {MMAP_MOJI_EMOJI_LOVING_AAF, true, EMOJI_FPS}},
-        {"embarrassed", {MMAP_MOJI_EMOJI_EMBARRASSED_AAF, true, EMOJI_FPS}},
-        {"confident",   {MMAP_MOJI_EMOJI_CONFIDENT_AAF, true, EMOJI_FPS}},
-        {"delicious",   {MMAP_MOJI_EMOJI_DELICIOUS_AAF, true, EMOJI_FPS}},
+        // {"laughing",    {MMAP_MOJI_EMOJI_LAUGHING_AAF, true, EMOJI_FPS}},
+        // {"funny",       {MMAP_MOJI_EMOJI_FUNNY_AAF, true, EMOJI_FPS}},
+        // {"loving",      {MMAP_MOJI_EMOJI_LOVING_AAF, true, EMOJI_FPS}},
+        // {"embarrassed", {MMAP_MOJI_EMOJI_EMBARRASSED_AAF, true, EMOJI_FPS}},
+        // {"confident",   {MMAP_MOJI_EMOJI_CONFIDENT_AAF, true, EMOJI_FPS}},
+        // {"delicious",   {MMAP_MOJI_EMOJI_DELICIOUS_AAF, true, EMOJI_FPS}},
         {"sad",         {MMAP_MOJI_EMOJI_SAD_AAF,   true, EMOJI_FPS}},
-        {"crying",      {MMAP_MOJI_EMOJI_CRYING_AAF,   true, EMOJI_FPS}},
-        {"sleepy",      {MMAP_MOJI_EMOJI_SLEEPY_AAF,   true, EMOJI_FPS}},
-        {"silly",       {MMAP_MOJI_EMOJI_SILLY_AAF,   true, EMOJI_FPS}},
+        // {"crying",      {MMAP_MOJI_EMOJI_CRYING_AAF,   true, EMOJI_FPS}},
+        // {"sleepy",      {MMAP_MOJI_EMOJI_SLEEPY_AAF,   true, EMOJI_FPS}},
+        // {"silly",       {MMAP_MOJI_EMOJI_SILLY_AAF,   true, EMOJI_FPS}},
         {"angry",       {MMAP_MOJI_EMOJI_ANGRY_AAF, true, EMOJI_FPS}},
-        {"surprised",   {MMAP_MOJI_EMOJI_SURPRISE_AAF, true, EMOJI_FPS}},
-        {"shocked",     {MMAP_MOJI_EMOJI_SHOCKED_AAF, true, EMOJI_FPS}},
+        // {"surprised",   {MMAP_MOJI_EMOJI_SURPRISE_AAF, true, EMOJI_FPS}},
+        // {"shocked",     {MMAP_MOJI_EMOJI_SHOCKED_AAF, true, EMOJI_FPS}},
         {"thinking",    {MMAP_MOJI_EMOJI_THINKING_AAF, true, EMOJI_FPS}},
         {"winking",     {MMAP_MOJI_EMOJI_WINKING_AAF, true, EMOJI_FPS}},
         {"relaxed",     {MMAP_MOJI_EMOJI_RELAXED_AAF, true, EMOJI_FPS}},
-        {"confused",    {MMAP_MOJI_EMOJI_CONFUSED_AAF, true, EMOJI_FPS}},
+        // {"confused",    {MMAP_MOJI_EMOJI_CONFUSED_AAF, true, EMOJI_FPS}},
     };
 
     auto it = emotion_map.find(emotion);
@@ -192,9 +245,9 @@ void EmojiWidget::SetStatus(const char* status)
 {
     if (player_) {
         if (strcmp(status, "聆听中...") == 0) {
-            player_->StartPlayer(MMAP_MOJI_EMOJI_LISTENING_AAF, true, EMOJI_FPS);
+            player_->StartPlayer(MMAP_MOJI_EMOJI_WINKING_AAF, true, EMOJI_FPS);
         } else if (strcmp(status, "待命") == 0) {
-            player_->StartPlayer(MMAP_MOJI_EMOJI_DEFAULT_AAF, true, EMOJI_FPS);
+            player_->StartPlayer(MMAP_MOJI_EMOJI_RELAXED_AAF, true, EMOJI_FPS);
         }
     }
 }
