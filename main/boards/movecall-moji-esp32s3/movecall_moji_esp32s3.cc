@@ -92,6 +92,15 @@ private:
 // 注意：0x2A和0x2B设置的是默认显示窗口，实际绘制时会由驱动重新设置
 // 列地址：0到465 (0x0000到0x01D1), 页地址：0到465 (0x0000到0x01D1)
 static const co5300_lcd_init_cmd_t co5300_spi_init_cmds[] = {
+    // {0xFE, (uint8_t[]){0x00}, 1, 0},
+    // {0xF4, (uint8_t[]){0x5A}, 1, 0},
+    // {0xF5, (uint8_t[]){0x59}, 1, 0},
+    // {0xFE, (uint8_t[]){0xE0}, 1, 0},
+    // {0x02, (uint8_t[]){0x20}, 1, 0},
+    // {0x04, (uint8_t[]){0x20}, 1, 0},
+    // {0x0C, (uint8_t[]){0x20}, 1, 0},
+    // {0x11, (uint8_t[]){0x14}, 1, 60},
+
     {0xFE, (uint8_t[]){0x00}, 1, 0},                   // Page switch
     {0xC4, (uint8_t[]){0x80}, 1, 0},                   // SPI setting, MIPI remove
     {0x3A, (uint8_t[]){0x55}, 1, 0},                   // 55 RGB565, 77 RGB888
@@ -248,6 +257,7 @@ private:
         auto ctx = (VehicleFeedbackCtx*)arg;
         if (ctx && ctx->board) {
             ctx->board->PlayTimedEmoji(ctx->aaf_id);
+            // ctx->board->GetDisplay()->SetEmotion(ctx->aaf_id);
             if (ctx->sound) {
                 // 保留旧路径（不再直接调用），车辆音效改为使用 PlayLocalPrompt
             }
@@ -532,7 +542,7 @@ private:
 
 
     // 统一的表情播放（定时自动恢复），供车辆检测与放置状态切换复用
-    void PlayTimedEmoji(int aaf_id) {
+    void PlayTimedEmoji(int aaf_id, float time=2.0f) {
         if (!display_) {
             ESP_LOGW(TAG, "Display not available for vehicle animation");
             return;
@@ -551,26 +561,28 @@ private:
         vehicle_motion_state_.last_animation_time = esp_timer_get_time();
         
         // 播放动画（循环播放）
-        widget->GetPlayer()->StartPlayer(aaf_id, true, 2);
-        // widget->GetPlayer()->PlayOnce(aaf_id, 2, nullptr);
+        // widget->GetPlayer()->StartPlayer(aaf_id, true, 2);
+        widget->GetPlayer()->TimedPLay(aaf_id, time, 10, [this]() {
+            EmojiSwitchTimerCallback(this);
+        });
         // ESP_LOGI(TAG, "Playing emoji animation: %d (loop play)", aaf_id);
         ESP_LOGI(TAG, "Playing emoji animation: %d (play once)", aaf_id);
 
-        // 启动定时器，2秒后切换回默认表情
-        if (vehicle_motion_state_.emoji_switch_timer_ == nullptr) {
-            esp_timer_create_args_t timer_args = {
-                .callback = EmojiSwitchTimerCallback,
-                .arg = this,
-                .dispatch_method = ESP_TIMER_TASK,
-                .name = "emoji_switch_timer",
-                .skip_unhandled_events = true,
-            };
-            esp_timer_create(&timer_args, &vehicle_motion_state_.emoji_switch_timer_);
-        }
+        // // 启动定时器，2秒后切换回默认表情
+        // if (vehicle_motion_state_.emoji_switch_timer_ == nullptr) {
+        //     esp_timer_create_args_t timer_args = {
+        //         .callback = EmojiSwitchTimerCallback,
+        //         .arg = this,
+        //         .dispatch_method = ESP_TIMER_TASK,
+        //         .name = "emoji_switch_timer",
+        //         .skip_unhandled_events = true,
+        //     };
+        //     esp_timer_create(&timer_args, &vehicle_motion_state_.emoji_switch_timer_);
+        // }
         
-        // // 停止之前的定时器并启动新的
+        // // // 停止之前的定时器并启动新的
         // esp_timer_stop(vehicle_motion_state_.emoji_switch_timer_);
-        // esp_timer_start_once(vehicle_motion_state_.emoji_switch_timer_, 2 * 1000 * 1000); // 2秒后切换
+        // esp_timer_start_once(vehicle_motion_state_.emoji_switch_timer_, time * 1000 * 1000);
     }
 
     void OnPlacementChanged(BaseController::PlacementState newState, BaseController::PlacementState oldState){
@@ -581,7 +593,12 @@ private:
                 if (display_) {
                     auto widget = static_cast<moji_anim::EmojiWidget*>(display_);
                     if (widget && widget->GetPlayer()) {
-                        widget->GetPlayer()->StartPlayer(MMAP_MOJI_EMOJI_WINKING_AAF, true, 2);
+                        PlayTimedEmoji(MMAP_MOJI_EMOJI_UNINSTALL_AAF);
+                        // ESP_LOGI(TAG, "Playing uninstall emoji animation...");
+                        // widget->GetPlayer()->PlayOnce(MMAP_MOJI_EMOJI_UNINSTALL_AAF, 2, [this](){
+                        //     ESP_LOGI(TAG, "PlayCallback called: uninstall animation completed");
+                        //     EmojiSwitchTimerCallback(this);
+                        // });
                     }
                 }
                 PlayLocalPrompt(Lang::Sounds::P3_POPUP, 2000000);
@@ -593,7 +610,12 @@ private:
                 if (display_) {
                     auto widget = static_cast<moji_anim::EmojiWidget*>(display_);
                     if (widget && widget->GetPlayer()) {
-                        widget->GetPlayer()->StartPlayer(MMAP_MOJI_EMOJI_SAFEBELT_AAF, true, 2);
+                        PlayTimedEmoji(MMAP_MOJI_EMOJI_CONNECTING_AAF);
+                        // ESP_LOGI(TAG, "Playing connecting emoji animation...");
+                        // widget->GetPlayer()->PlayOnce(MMAP_MOJI_EMOJI_CONNECTING_AAF, 2, [this](){
+                        //     ESP_LOGI(TAG, "PlayCallback called: connecting animation completed");
+                        //     EmojiSwitchTimerCallback(this);
+                        // });
                     }
                 }
                 PlayLocalPrompt(Lang::Sounds::P3_POWERUP, 2000000);
@@ -929,14 +951,14 @@ private:
     void ReadBatteryAdcData() {
         int adc_value;
         ESP_ERROR_CHECK(adc_oneshot_read(adc_handle_, BATTERY_ADC_CHANNEL, &adc_value));
-        ESP_LOGI(TAG, "ADC value: %d", adc_value);
+        ESP_LOGD(TAG, "ADC value: %d", adc_value);
 
         int voltage = 0; // mV
         
         if (do_calibration_) {
             // 使用校准转换
             ESP_ERROR_CHECK(adc_cali_raw_to_voltage(adc_cali_handle_, adc_value, &voltage));
-            ESP_LOGI(TAG, "Calibrated voltage: %d mV", voltage);
+            ESP_LOGD(TAG, "Calibrated voltage: %d mV", voltage);
         } else {
             // 使用原始值（简单转换）
             voltage = (adc_value * 2500) / 4095;
@@ -945,7 +967,7 @@ private:
 
         // 将实际电压乘以2得到调整后的电压
         uint32_t adjusted_voltage = voltage * 2;
-        ESP_LOGI(TAG, "Adjusted voltage: %ld mV", adjusted_voltage);
+        ESP_LOGD(TAG, "Adjusted voltage: %ld mV", adjusted_voltage);
 
         // 定义电池电量区间（基于调整后的电压值）
         const struct {
@@ -975,7 +997,7 @@ private:
             }
         }
 
-        ESP_LOGI(TAG, "Battery level: %ld%%", battery_level_);
+        ESP_LOGD(TAG, "Battery level: %ld%%", battery_level_);
     }
 
 public:

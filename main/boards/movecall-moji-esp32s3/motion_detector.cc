@@ -90,7 +90,7 @@ void MotionDetector::DetectVehiclePosture(int64_t current_time) {
     // Board is responsible for gating animations; MotionDetector only emits events
     const float ACCEL_X_THRESHOLD_ACCEL = 0.3f * 9.80665f;
     const float ACCEL_X_THRESHOLD_BRAKE = 0.6f * 9.80665f;
-    const float GYRO_Z_THRESHOLD = 10.0f;
+    const float GYRO_Z_THRESHOLD = 18.0f;
 
     if (accel_x_filtered < -ACCEL_X_THRESHOLD_ACCEL) {
         ESP_LOGI(TAG_MOTION, "Vehicle accelerating: ax=%.3f g", accel_x_filtered / 9.80665f);

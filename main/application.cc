@@ -624,13 +624,13 @@ void Application::Start() {
         }
         // Music detection (runs in background to avoid blocking)
         bool frame_music = false;
-        if (device_state_ == kDeviceStateListening) {
+        if (device_state_ == kDeviceStateListening || device_state_ == kDeviceStateIdle) {
             frame_music = IsMusicLikeFrame(data);
         }
 
         background_task_->Schedule([this, data = std::move(data), frame_music]() mutable {
             // Update music state with current frame duration
-            if (device_state_ == kDeviceStateListening) {
+            if (device_state_ == kDeviceStateListening || device_state_ == kDeviceStateIdle) {
                 UpdateMusicState(frame_music, OPUS_FRAME_DURATION_MS);
             }
             opus_encoder_->Encode(std::move(data), [this](std::vector<uint8_t>&& opus) {
@@ -900,12 +900,16 @@ void Application::OnAudioInput() {
         }
     }
 
-    if (wake_word_->IsDetectionRunning()) {
+    
+    if (wake_word_->IsDetectionRunning()) { 
         std::vector<int16_t> data;
         int samples = wake_word_->GetFeedSize();
         if (samples > 0) {
             if (ReadAudio(data, 16000, samples)) {
                 wake_word_->Feed(data);
+                if (audio_processor_->IsRunning()) {
+                    audio_processor_->Feed(data);
+                }
                 return;
             }
         }
@@ -1004,7 +1008,15 @@ void Application::SetDeviceState(DeviceState state) {
         case kDeviceStateIdle:
             display->SetStatus(Lang::Strings::STANDBY);
             display->SetEmotion("neutral");
-            audio_processor_->Stop();
+            // audio_processor_->Stop(); // allow music detection in idle state
+            if (!audio_processor_->IsRunning()) {
+                audio_processor_->Start();
+                ESP_LOGI(TAG, "Audio processor restarted");
+            }
+                        // If music is already considered active by detection, reflect it on UI
+            if (music_detected_) {
+                display->SetEmotion("music");
+            }
             wake_word_->StartDetection();
             // Reset last DOA on idle
             last_doa_angle_deg_ = -1.0f;
@@ -1025,7 +1037,7 @@ void Application::SetDeviceState(DeviceState state) {
             nonmusic_ms_accum_ = 0;
             // If music is already considered active by detection, reflect it on UI
             if (music_detected_) {
-                display->SetEmotion("relaxed");
+                display->SetEmotion("music");
             }
             // Update the IoT states before sending the start listening command
 #if CONFIG_IOT_PROTOCOL_XIAOZHI
@@ -1103,7 +1115,10 @@ void Application::SetDecodeSampleRate(int sample_rate, int frame_duration) {
 }
 
 bool Application::IsMusicLikeFrame(const std::vector<int16_t>& pcm) {
-    if (pcm.empty()) return false;
+    if (pcm.empty()) {
+        ESP_LOGI(TAG, "Empty PCM frame for music detection");
+        return false;
+    }
     // Compute RMS and zero-crossing rate
     double sum_sq = 0.0;
     int zero_cross = 0;
@@ -1129,7 +1144,7 @@ bool Application::IsMusicLikeFrame(const std::vector<int16_t>& pcm) {
     ema_rms_ = ema_alpha * float(rms) + (1.0f - ema_alpha) * ema_rms_;
     ema_zcr_ = ema_alpha * zcr + (1.0f - ema_alpha) * ema_zcr_;
     music_dbg_frames_++;
-    if (music_dbg_frames_ >= dbg_interval_frames && device_state_ == kDeviceStateListening) {
+    if (music_dbg_frames_ >= dbg_interval_frames && (device_state_ == kDeviceStateListening || device_state_ == kDeviceStateIdle)) {
         music_dbg_frames_ = 0;
         ESP_LOGI(TAG, "MusicDBG rms=%.1f zcr=%.3f thr=%.1f [%.3f, %.3f] speech=%d music_acc=%dms nonmusic_acc=%dms state=%d", (double)ema_rms_, (double)ema_zcr_, (double)rms_threshold_, (double)zcr_min_, (double)zcr_max_, voice_detected_ ? 1 : 0, music_ms_accum_, nonmusic_ms_accum_, music_detected_ ? 1 : 0);
         ESP_LOGI(TAG, "Music detection thresholds: RMS=%.1f, ZCR=[%.3f, %.3f], VAD penalty=%.1fx", (double)rms_threshold_, (double)zcr_min_, (double)zcr_max_, voice_detected_ ? 2.0 : 1.0);
@@ -1169,7 +1184,7 @@ void Application::UpdateMusicState(bool frame_is_music, int frame_ms) {
     if (!music_detected_ && music_ms_accum_ >= music_enter_ms_) {
         music_detected_ = true;
         auto display = Board::GetInstance().GetDisplay();
-        display->SetEmotion("relaxed");
+        display->SetEmotion("music");
     }
 
     // If voice is detected, exit music state faster to avoid false music detection
@@ -1186,6 +1201,10 @@ void Application::UpdateMusicState(bool frame_is_music, int frame_ms) {
         if (device_state_ == kDeviceStateListening) {
             auto display = Board::GetInstance().GetDisplay();
             display->SetStatus(Lang::Strings::LISTENING);
+        }
+        else if (device_state_ == kDeviceStateIdle) {
+            auto display = Board::GetInstance().GetDisplay();
+            display->SetStatus(Lang::Strings::STANDBY);
         }
     }
 }

@@ -29,7 +29,9 @@ public:
             // Play the given animation once. When playback completes, on_complete will be invoked
     // on the player's task context. The callback will be cleared after invocation.
     void PlayOnce(int aaf, int fps, std::function<void()> on_complete = {});
+    void TimedPLay(int aaf, float time, int fps,  std::function<void()> on_complete = {});
     void StopPlayer();
+    void SetStatusPointColors(uint16_t colors[3]);
 
 private:
     static bool OnFlushIoReady(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_io_event_data_t *edata, void *user_ctx);
@@ -43,6 +45,18 @@ private:
     int y_offset_ = 0;
     // optional callback invoked when PlayOnce finishes
     std::function<void()> play_once_callback_;
+    std::function<void()> timed_play_callback_;
+
+    // timer for blinking status points
+    esp_timer_handle_t status_point_timer_;
+    bool status_points_visible_ = true;
+
+    // timer for timed play
+    esp_timer_handle_t timed_play_timer_;
+    bool timed_play_active_ = false;
+
+    // store colors of status points
+    uint16_t status_point_colors_[3] = {0x0000, 0x0000, 0x0000};
 };
 
 class EmojiWidget : public Display {
@@ -52,6 +66,7 @@ public:
 
     virtual void SetEmotion(const char* emotion) override;
     virtual void SetStatus(const char* status) override;
+    virtual void UpdateStatusBar(bool update_all = false) override;
     moji_anim::EmojiPlayer* GetPlayer()
     {
         return player_.get();
@@ -60,6 +75,13 @@ private:
     void InitializePlayer(esp_lcd_panel_handle_t panel, esp_lcd_panel_io_handle_t panel_io);
     virtual bool Lock(int timeout_ms = 0) override;
     virtual void Unlock() override;
+
+    // status for the bottom status points
+    struct {
+        enum { DISCONNECTED, CONNECTED } network_status;
+        enum { PRIVACY, NORMAL } privacy_status;
+        enum { LOW, MEDIUM, CHARGING } power_status;
+    } display_status_;
 
     std::unique_ptr<moji_anim::EmojiPlayer> player_;
 };

@@ -5,6 +5,10 @@
 #include "emoji_widget.h"
 #include "mmap_generate_moji_emoji.h"
 #include "config.h"
+#include "assets/lang_config.h"
+#include "board.h"
+#include "application.h"
+#include "font_awesome_symbols.h"
 
 #include <functional>
 #include <tuple>
@@ -18,8 +22,14 @@
 #include <freertos/queue.h>
 #include <freertos/event_groups.h>
 
+// convert from rgb 0~1 to BRG565
+// __G
+// _R_
+// B
+#define COLOR(r, g, b) (uint16_t)(((uint8_t)(b*31) << 11) | ((uint8_t)(r*63) << 5) | ((uint8_t)(g*31)))
+
 static const char *TAG = "moji_emoji";
-#define EMOJI_FPS 2
+#define EMOJI_FPS 10
 
 namespace moji_anim {
 
@@ -39,6 +49,48 @@ void EmojiPlayer::OnFlush(anim_player_handle_t handle, int x_start, int y_start,
     // 初始化序列中0x2A设置为{0x00, 0x06, 0x01, 0xD7}，表示列地址6-471
     // 动画播放器传入的坐标是0-465，需要加上6的偏移使其变为6-471
     const int COLUMN_OFFSET = 6;
+
+    // draw status points at the bottom center
+    const int STATUS_POINT_RADIUS = 8;
+    const int STATUS_POINT_SPACING = 24;
+    // blue, orange, red
+    // const uint16_t STATUS_POINT_COLORS[3] = {0x001F, 0x7BEF, 0xF800};
+
+    // const uint16_t test_color[3] = {
+    //     COLOR(1.0, 0.0, 0.0), // Red
+    //     COLOR(0.0, 1.0, 0.0), // Green
+    //     COLOR(0.0, 0.0, 1.0), // Blue
+    // };
+
+
+    for (int i = 0; i < 3; ++i) {
+        int cx = (466 / 2) - STATUS_POINT_SPACING + i * STATUS_POINT_SPACING;
+        int cy = 466 - STATUS_POINT_RADIUS - 12;
+        for (int y = -STATUS_POINT_RADIUS; y <= STATUS_POINT_RADIUS; y++) {
+            for (int x = -STATUS_POINT_RADIUS; x <= STATUS_POINT_RADIUS; x++) {
+                if (x * x + y * y <= STATUS_POINT_RADIUS * STATUS_POINT_RADIUS) {
+                    int draw_x = cx + x;
+                    int draw_y = cy + y;
+                    // Check if the pixel is within the current flush area
+                    if (draw_x >= x_start && draw_x < x_end && draw_y >= y_start && draw_y < y_end) {
+                        // Calculate the position in the color_data buffer
+                        int buffer_x = draw_x - x_start;
+                        int buffer_y = draw_y - y_start;
+                        int buffer_index = buffer_y * (x_end - x_start) + buffer_x;
+                        uint16_t* pixel_ptr = (uint16_t*)((uint8_t*)color_data + buffer_index * sizeof(uint16_t));
+                        // Set color
+                        *pixel_ptr = self->status_point_colors_[i];
+                        // blink
+                        if (!self->status_points_visible_ && (i==2)) {
+                            *pixel_ptr = 0x0000; // Black when not visible
+                        }
+                        // *pixel_ptr = test_color[i];
+                    }
+                }
+            }
+        }
+    }
+
     esp_lcd_panel_draw_bitmap(panel, x_start + COLUMN_OFFSET, y_start, x_end + COLUMN_OFFSET, y_end, color_data);
 }
 
@@ -69,7 +121,19 @@ EmojiPlayer::EmojiPlayer(esp_lcd_panel_handle_t panel, esp_lcd_panel_io_handle_t
         .on_color_trans_done = OnFlushIoReady,
     };
     esp_lcd_panel_io_register_event_callbacks(panel_io, &cbs, player_handle_);
-    
+
+    // start blinking timer
+    esp_timer_create_args_t timer_args = {
+        .callback = [](void* arg) {
+            auto* self = static_cast<EmojiPlayer*>(arg);
+            self->status_points_visible_ = !self->status_points_visible_;
+        },
+        .arg = this,
+        .name = "status_point_blink_timer"
+    };
+    esp_timer_create(&timer_args, &status_point_timer_);
+    esp_timer_start_periodic(status_point_timer_, 500 * 1000); // 500ms
+
     StartPlayer(MMAP_MOJI_EMOJI_WINKING_AAF, true, EMOJI_FPS);
 }
 
@@ -98,7 +162,7 @@ void EmojiPlayer::PlayOnce(int aaf, int fps, std::function<void()> on_complete)
         src_data = mmap_assets_get_mem(assets_handle_, aaf);
         src_len = mmap_assets_get_size(assets_handle_, aaf);
 
-    anim_player_set_src_data(player_handle_, src_data, src_len);
+        anim_player_set_src_data(player_handle_, src_data, src_len);
         anim_player_get_segment(player_handle_, &start, &end);
         anim_player_set_segment(player_handle_, start, end, fps, false);
         anim_player_update(player_handle_, PLAYER_ACTION_START);
@@ -149,6 +213,48 @@ void EmojiPlayer::StartPlayer(int aaf, bool repeat, int fps)
     }
 }
 
+void EmojiPlayer::TimedPLay(int aaf, float time, int fps,  std::function<void()> on_complete)
+{
+    if (player_handle_) {
+        if (timed_play_active_) {
+            esp_timer_stop(timed_play_timer_);
+            esp_timer_delete(timed_play_timer_);
+            timed_play_timer_ = nullptr;
+            timed_play_active_ = false;
+            StopPlayer();
+        }
+        if (on_complete) {
+            timed_play_callback_ = std::move(on_complete);
+        } else {
+            timed_play_callback_ = {};
+        }
+
+        StartPlayer(aaf, true, fps);
+        // setup timer to stop after time seconds
+        esp_timer_create_args_t timer_args = {
+            .callback = [](void* arg) {
+                auto* self = static_cast<EmojiPlayer*>(arg);
+                self->StopPlayer();
+                self->timed_play_active_ = false;
+                if (self->timed_play_callback_) {
+                    auto cb = std::move(self->timed_play_callback_);
+                    self->timed_play_callback_ = {};
+                    try {
+                        cb();
+                    } catch (...) {
+                        ESP_LOGW(TAG, "TimedPlay callback threw an exception");
+                    }
+                }
+            },
+            .arg = this,
+            .name = "timed_play_timer"
+        };
+        esp_timer_create(&timer_args, &timed_play_timer_);
+        esp_timer_start_once(timed_play_timer_, static_cast<uint64_t>(time * 1000000)); // convert to microseconds
+        timed_play_active_ = true;
+    }
+}
+
 void EmojiPlayer::StopPlayer()
 {
     if (player_handle_) {
@@ -195,6 +301,13 @@ void EmojiPlayer::OnUpdate(anim_player_handle_t handle, player_event_t event)
     }
 }
 
+void EmojiPlayer::SetStatusPointColors(uint16_t colors[3])
+{
+    for (int i = 0; i < 3; ++i) {
+        status_point_colors_[i] = colors[i];
+    }
+}
+
 EmojiWidget::EmojiWidget(esp_lcd_panel_handle_t panel, esp_lcd_panel_io_handle_t panel_io)
 {
     InitializePlayer(panel, panel_io);
@@ -231,13 +344,24 @@ void EmojiWidget::SetEmotion(const char* emotion)
         {"winking",     {MMAP_MOJI_EMOJI_WINKING_AAF, true, EMOJI_FPS}},
         {"relaxed",     {MMAP_MOJI_EMOJI_RELAXED_AAF, true, EMOJI_FPS}},
         // {"confused",    {MMAP_MOJI_EMOJI_CONFUSED_AAF, true, EMOJI_FPS}},
+        {"music",     {MMAP_MOJI_EMOJI_MUSIC_AAF, true, EMOJI_FPS}}
     };
 
     auto it = emotion_map.find(emotion);
     if (it != emotion_map.end()) {
         const auto& [aaf, repeat, fps] = it->second;
-        player_->StartPlayer(aaf, repeat, fps);
+        player_->TimedPLay(aaf, 2, fps, [this](){
+            ESP_LOGI(TAG, "TimedPlay completed");
+            // Reset the emoji to neutral after the timed play
+            this->player_->StartPlayer(MMAP_MOJI_EMOJI_RELAXED_AAF, true, EMOJI_FPS);
+        });
+        ESP_LOGI(TAG, "SetEmoji called --- Set emotion to %s", emotion);
     } else if (strcmp(emotion, "neutral") == 0) {
+        // do nothing, keep current
+        player_->StartPlayer(MMAP_MOJI_EMOJI_RELAXED_AAF, true, EMOJI_FPS);
+    }
+    else {
+        ESP_LOGI(TAG, "SetEmoji called --- unknown emotion: %s", emotion);
     }
 }
 
@@ -249,8 +373,71 @@ void EmojiWidget::SetStatus(const char* status)
         } else if (strcmp(status, "待命") == 0) {
             player_->StartPlayer(MMAP_MOJI_EMOJI_RELAXED_AAF, true, EMOJI_FPS);
         }
+        else {
+            ESP_LOGI(TAG, "Setting status to %s emoji", status);
+        }
+
     }
 }
+
+void EmojiWidget::UpdateStatusBar(bool update_all)
+{
+    auto& board = Board::GetInstance();
+    uint16_t colors[3];
+
+    // battry
+    int battery_level;
+    bool charging, discharging;
+
+    if (board.GetBatteryLevel(battery_level, charging, discharging)) {
+        if (charging) {
+            display_status_.power_status = display_status_.CHARGING;
+            colors[2] = COLOR(0.251f, 0.89f, 0.0f); // Green
+        } else if (battery_level >= 20) {
+            display_status_.power_status = display_status_.MEDIUM;
+            colors[2] = COLOR(0.0f, 0.0f, 0.0f); // Black
+        } else {
+            display_status_.power_status = display_status_.LOW;
+            colors[2] = COLOR(1.0f, 0.07f, 0.0f); // Red
+        }
+    }
+
+    // network
+    if (strcmp(board.GetNetworkStateIcon(), FONT_AWESOME_WIFI_OFF) == 0) {
+        display_status_.network_status = display_status_.DISCONNECTED;
+        colors[0] = 0x0000;
+    } else {
+        display_status_.network_status = display_status_.CONNECTED;
+        colors[0] = COLOR(0.0f, 0.706f, 1.0f); // Blue
+    }
+
+    // privacy mode
+    auto& app = Application::GetInstance();
+    if (app.GetDeviceState() == kDeviceStateListening || app.GetDeviceState() == kDeviceStateConnecting)
+    {
+        display_status_.privacy_status = display_status_.NORMAL;
+        colors[1] = COLOR(1.0f, 0.5f, 0.0f); // Orange
+    } 
+    else 
+    {
+        // if (display_status_.privacy_status != display_status_.PRIVACY){
+        //     // if listening previously, change back  only after speaking
+        //     if (app.GetDeviceState() == kDeviceStateSpeaking) {
+        //         display_status_.privacy_status = display_status_.PRIVACY;
+        //         colors[1] = 0x0000; // Black
+        //         return;
+        //     } else {
+        //         return; // do not change
+        //     }
+        // }
+        colors[1] = 0x0000; // Black
+    }
+
+    player_->SetStatusPointColors(colors);
+}
+
+
+
 
 void EmojiWidget::InitializePlayer(esp_lcd_panel_handle_t panel, esp_lcd_panel_io_handle_t panel_io)
 {
