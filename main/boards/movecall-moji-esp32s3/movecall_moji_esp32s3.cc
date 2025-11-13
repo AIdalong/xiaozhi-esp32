@@ -17,6 +17,7 @@
 #include "motion_detector.h"
 #include <memory>
 #include <esp_rom_sys.h>
+#include "settings.h"
 
 #include <wifi_station.h>
 #include <cmath>
@@ -227,7 +228,7 @@ private:
                     default:
                         // 停止IDLE表情轮播
                         board->StopIdleEmojiRotation();
-                        widget->GetPlayer()->StartPlayer(MMAP_MOJI_EMOJI_WINKING_AAF, true, 2);
+                        widget->GetPlayer()->StartPlayer(MMAP_MOJI_EMOJI_RELAXED_AAF, true, 2);
                         break;
                 }
             } else {
@@ -268,7 +269,7 @@ private:
         }
         delete ctx;
     }
-    void ScheduleVehicleFeedback(int aaf_id, const std::string_view& sound) {
+    void ScheduleVefhicleFeedback(int aaf_id, const std::string_view& sound) {
         auto* ctx = new VehicleFeedbackCtx{this, aaf_id, &sound, nullptr};
         esp_timer_create_args_t targs = {
             .callback = VehicleFeedbackTimerCallback,
@@ -1108,6 +1109,44 @@ public:
         if (!base_controller_) base_controller_ = std::make_unique<BaseController>();
         if (!base_controller_->IsInitialized()) base_controller_->Initialize();
         if (base_controller_->IsInitialized()) base_controller_->ResetMotor();
+    }
+
+    void CheckFirstStartup() override {
+        Settings settings("first_startup", true);
+        int first_startup = settings.GetInt("first_startup", 0);
+        if (first_startup != 0) {
+            ESP_LOGI(TAG, "Not first startup, skipping first startup actions");
+            return;
+        }
+
+        // the flag will be cleared after activation completes
+
+        ESP_LOGI(TAG, "First startup detected, performing first startup actions");
+
+        // show blink emoji and play sound
+        auto play_done = std::make_shared<bool>(false);
+        if (display_) {
+            auto widget = static_cast<moji_anim::EmojiWidget*>(display_);
+            if (widget && widget->GetPlayer()) {
+                ESP_LOGI(TAG, "Playing blink emoji for first startup...");
+                widget->GetPlayer()->TimedPLay(MMAP_MOJI_EMOJI_BLINK_AAF, 2.5f, 10, [this, play_done]() {
+                    *play_done = true;
+                    ESP_LOGI(TAG, "Blink emoji play completed");
+                    // after blink, play sound and switch to default emoji
+                    Application::GetInstance().PlaySound(Lang::Sounds::P3_POWERUP);
+                    EmojiSwitchTimerCallback(this);
+                });
+            }
+        }
+
+        // wait for play done
+        ESP_LOGI(TAG, "Waiting for blink emoji to finish playing...");
+        while (!*play_done) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
+        ESP_LOGI(TAG, "First startup actions completed");
+        // back to app for network setup
+        return;
     }
 
     // IDLE状态表情轮播管理函数

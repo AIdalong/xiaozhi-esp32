@@ -2,6 +2,7 @@
 #include "board.h"
 #include "display.h"
 #include "system_info.h"
+#include "settings.h"
 #include "ml307_ssl_transport.h"
 #include "audio_codec.h"
 #include "mqtt_protocol.h"
@@ -181,6 +182,11 @@ void Application::CheckNewVersion(Ota& ota) {
         ota.MarkCurrentVersionValid();
         if (!ota.HasActivationCode() && !ota.HasActivationChallenge()) {
             xEventGroupSetBits(event_group_, CHECK_NEW_VERSION_DONE_EVENT);
+
+            // clear the mark for the first startup
+            Settings settings("first_startup", true);
+            settings.SetInt("first_startup", 1);
+
             // Exit the loop if done checking new version
             break;
         }
@@ -457,6 +463,11 @@ void Application::Start() {
 
     /* Start the clock timer to update the status bar */
     esp_timer_start_periodic(clock_timer_handle_, 1000000);
+
+    /* Check for the first startup */
+    ESP_LOGI(TAG, "Checking for first startup...");
+    board.CheckFirstStartup();
+    ESP_LOGI(TAG, "First startup check completed.");
 
     /* Wait for the network to be ready */
     board.StartNetwork();

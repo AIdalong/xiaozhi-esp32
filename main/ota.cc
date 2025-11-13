@@ -471,5 +471,10 @@ esp_err_t Ota::Activate() {
     }
 
     ESP_LOGI(TAG, "Activation successful");
+
+    // clear first boot flag
+    Settings settings("first_startup", true);
+    settings.SetInt("first_startup", 1);
+
     return ESP_OK;
 }

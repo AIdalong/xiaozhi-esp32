@@ -149,7 +149,7 @@ Udp* WifiBoard::CreateUdp() {
 
 const char* WifiBoard::GetNetworkStateIcon() {
     if (wifi_config_mode_) {
-        return FONT_AWESOME_WIFI;
+        return FONT_AWESOME_WIFI_OFF;
     }
     auto& wifi_station = WifiStation::GetInstance();
     if (!wifi_station.IsConnected()) {
