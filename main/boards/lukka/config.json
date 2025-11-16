@@ -2,7 +2,7 @@
     "target": "esp32s3",
     "builds": [
         {
-            "name": "movecall-moji-esp32s3",
+            "name": "lukka",
             "sdkconfig_append": []
         }
     ]

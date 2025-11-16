@@ -26,7 +26,7 @@ set(SOURCES "audio_codecs/audio_codec.cc"
             "settings.cc"
             "background_task.cc"
             "main.cc"
-            "boards/movecall-moji-esp32s3/emoji_widget.cc"
+            "boards/lukka/emoji_widget.cc"
             )
 
 set(INCLUDE_DIRS "." "display" "audio_codecs" "protocols" "audio_processing")
@@ -143,8 +143,8 @@ elseif(CONFIG_BOARD_TYPE_LILYGO_T_DISPLAY_S3_PRO_MVSRLORA)
     set(BOARD_TYPE "lilygo-t-display-s3-pro-mvsrlora")
 elseif(CONFIG_BOARD_TYPE_LILYGO_T_DISPLAY_S3_PRO_MVSRLORA_NO_BATTERY)
     set(BOARD_TYPE "lilygo-t-display-s3-pro-mvsrlora")
-elseif(CONFIG_BOARD_TYPE_MOVECALL_MOJI_ESP32S3)
-    set(BOARD_TYPE "movecall-moji-esp32s3")
+elseif(CONFIG_BOARD_TYPE_LUKKA)
+    set(BOARD_TYPE "lukka")
     elseif(CONFIG_BOARD_TYPE_MOVECALL_CUICAN_ESP32S3)
     set(BOARD_TYPE "movecall-cuican-esp32s3")
 elseif(CONFIG_BOARD_TYPE_ATK_DNESP32S3)
@@ -327,7 +327,7 @@ if(CONFIG_BOARD_TYPE_ESP_HI)
     )
 endif()
 
-if(CONFIG_BOARD_TYPE_MOVECALL_MOJI_ESP32S3)
+if(CONFIG_BOARD_TYPE_LUKKA)
     set(EMOJI_SOURCE_DIR "${PROJECT_DIR}/emoji")
     set(SPIFFS_DIR "${CMAKE_BINARY_DIR}/moji_emoji")
     file(MAKE_DIRECTORY ${SPIFFS_DIR})

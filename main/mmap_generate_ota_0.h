@@ -14,7 +14,7 @@
 #include "esp_mmap_assets.h"
 
 #define MMAP_OTA_0_FILES           23
-#define MMAP_OTA_0_CHECKSUM        0x7ABC
+#define MMAP_OTA_0_CHECKSUM        0xBBEA
 
 enum MMAP_OTA_0_LISTS {
     MMAP_OTA_0_ANGRY_AAF = 0,        /*!< angry.aaf */

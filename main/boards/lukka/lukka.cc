@@ -46,34 +46,34 @@
 
 #define TAG "MovecallMojiESP32S3"
 
-LV_FONT_DECLARE(font_puhui_20_4);
-LV_FONT_DECLARE(font_awesome_20_4);
+// LV_FONT_DECLARE(font_puhui_20_4);
+// LV_FONT_DECLARE(font_awesome_20_4);
 
 
-class CustomLcdDisplay : public SpiLcdDisplay {
-public:
-    CustomLcdDisplay(esp_lcd_panel_io_handle_t io_handle, 
-                    esp_lcd_panel_handle_t panel_handle,
-                    int width,
-                    int height,
-                    int offset_x,
-                    int offset_y,
-                    bool mirror_x,
-                    bool mirror_y,
-                    bool swap_xy) 
-        : SpiLcdDisplay(io_handle, panel_handle, width, height, offset_x, offset_y, mirror_x, mirror_y, swap_xy,
-                    {
-                        .text_font = &font_puhui_20_4,
-                        .icon_font = &font_awesome_20_4,
-                        .emoji_font = font_emoji_64_init(),
-                    }) {
+// class CustomLcdDisplay : public SpiLcdDisplay {
+// public:
+//     CustomLcdDisplay(esp_lcd_panel_io_handle_t io_handle, 
+//                     esp_lcd_panel_handle_t panel_handle,
+//                     int width,
+//                     int height,
+//                     int offset_x,
+//                     int offset_y,
+//                     bool mirror_x,
+//                     bool mirror_y,
+//                     bool swap_xy) 
+//         : SpiLcdDisplay(io_handle, panel_handle, width, height, offset_x, offset_y, mirror_x, mirror_y, swap_xy,
+//                     {
+//                         .text_font = &font_puhui_20_4,
+//                         .icon_font = &font_awesome_20_4,
+//                         .emoji_font = font_emoji_64_init(),
+//                     }) {
 
-        DisplayLockGuard lock(this);
-        // 由于屏幕是圆的，所以状态栏需要增加左右内边距
-        lv_obj_set_style_pad_left(status_bar_, LV_HOR_RES * 0.33, 0);
-        lv_obj_set_style_pad_right(status_bar_, LV_HOR_RES * 0.33, 0);
-    }
-};
+//         DisplayLockGuard lock(this);
+//         // 由于屏幕是圆的，所以状态栏需要增加左右内边距
+//         lv_obj_set_style_pad_left(status_bar_, LV_HOR_RES * 0.33, 0);
+//         lv_obj_set_style_pad_right(status_bar_, LV_HOR_RES * 0.33, 0);
+//     }
+// };
 
 // CO5300 AMOLED背光控制类
 class Co5300Backlight : public Backlight {
@@ -106,7 +106,7 @@ static const co5300_lcd_init_cmd_t co5300_spi_init_cmds[] = {
     {0x29, (uint8_t[]){0x00}, 0, 0},                   // Display on
 };
 
-class MovecallMojiESP32S3 : public WifiBoard {
+class Lukka : public WifiBoard {
 private:
     i2c_master_bus_handle_t codec_i2c_bus_;
     Button boot_button_;
@@ -187,17 +187,17 @@ private:
 
 
     static void TouchpadTimerCallback(void* arg) {
-        MovecallMojiESP32S3* board = (MovecallMojiESP32S3*)arg;
+        Lukka* board = (Lukka*)arg;
         board->PollTouchpad();
     }
     
     static void TouchEventTask(void* arg) {
-        MovecallMojiESP32S3* board = (MovecallMojiESP32S3*)arg;
+        Lukka* board = (Lukka*)arg;
         board->HandleTouchEvents();
     }
     
     static void EmojiSwitchTimerCallback(void* arg) {
-        MovecallMojiESP32S3* board = (MovecallMojiESP32S3*)arg;
+        Lukka* board = (Lukka*)arg;
         if (board && board->display_) {
             auto widget = static_cast<moji_anim::EmojiWidget*>(board->display_);
             if (widget && widget->GetPlayer()) {
@@ -240,7 +240,7 @@ private:
 
 
     struct VehicleFeedbackCtx {
-        MovecallMojiESP32S3* board;
+        Lukka* board;
         int aaf_id;
         const std::string_view* sound;
         esp_timer_handle_t timer;
@@ -277,7 +277,7 @@ private:
         }
     }
     static void BMI270InitTimerCallback(void* arg) {
-        MovecallMojiESP32S3* board = (MovecallMojiESP32S3*)arg;
+        Lukka* board = (Lukka*)arg;
         if (board) {
             // Initialize the BMI270 sensor via the wrapper and register a data callback
             if (!board->bmi_sensor_) board->bmi_sensor_ = std::make_unique<Bmi270Sensor>();
@@ -290,7 +290,7 @@ private:
 
     static void IdleEmojiRotationTimerCallback(void* arg) {
         ESP_LOGI(TAG, "Idle emoji rotation timer triggered");
-        MovecallMojiESP32S3* board = (MovecallMojiESP32S3*)arg;
+        Lukka* board = (Lukka*)arg;
         if (board && board->display_) {
             // 检查设备是否仍处于IDLE状态
             DeviceState current_state = Application::GetInstance().GetDeviceState();
@@ -365,7 +365,7 @@ private:
 
     // 本地提示音播放：在 Idle 下短暂开启输出，播放完成后自动关闭
     static void SoundDisableOutTimerCb(void* arg) {
-        auto* board = static_cast<MovecallMojiESP32S3*>(arg);
+        auto* board = static_cast<Lukka*>(arg);
         if (!board) return;
         auto state = Application::GetInstance().GetDeviceState();
         if (state == kDeviceStateIdle) {
@@ -1011,7 +1011,7 @@ private:
     }
 
 public:
-    MovecallMojiESP32S3() : boot_button_(BOOT_BUTTON_GPIO) {  
+    Lukka() : boot_button_(BOOT_BUTTON_GPIO) {  
         InitializeBatteryAdc_ChrgStat();
         InitializeCodecI2c();
         InitializeSpi();
@@ -1217,4 +1217,4 @@ public:
     // Independent shake detection moved into MotionDetector
 };
 
-DECLARE_BOARD(MovecallMojiESP32S3);
+DECLARE_BOARD(Lukka);

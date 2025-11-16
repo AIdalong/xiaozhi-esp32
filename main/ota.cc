@@ -2,6 +2,7 @@
 #include "system_info.h"
 #include "settings.h"
 #include "assets/lang_config.h"
+#include "application.h"
 
 #include <cJSON.h>
 #include <esp_log.h>
@@ -474,7 +475,8 @@ esp_err_t Ota::Activate() {
 
     // clear first boot flag
     Settings settings("first_startup", true);
-    settings.SetInt("first_startup", 1);
+    ESP_LOGI(TAG, "To enter chat mode directly after activation");
+    settings.SetInt("first_startup", 9);
 
     return ESP_OK;
 }

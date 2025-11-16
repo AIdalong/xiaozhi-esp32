@@ -185,7 +185,10 @@ void Application::CheckNewVersion(Ota& ota) {
 
             // clear the mark for the first startup
             Settings settings("first_startup", true);
-            settings.SetInt("first_startup", 1);
+            int first_startup_flag = settings.GetInt("first_startup", 0);
+            if (first_startup_flag == 0) {
+                settings.SetInt("first_startup", 9); // wait for protocol to handle                
+            }
 
             // Exit the loop if done checking new version
             break;
@@ -742,6 +745,17 @@ void Application::Start() {
         // Play the success sound to indicate the device is ready
         ResetDecoder();
         PlaySound(Lang::Sounds::P3_SUCCESS);
+
+        // If first startup, enter chat mode directly
+        Settings settings("first_startup", true);
+        int first_startup_flag = settings.GetInt("first_startup", 0);
+        if (first_startup_flag == 9) {
+            settings.SetInt("first_startup", 1); // mark as handled
+            ToggleChatState();
+            WakeWordInvoke(Lang::Strings::ACTIVATION_PROMPT);
+            ESP_LOGI(TAG, "Entering chat mode directly after activation");
+            settings.SetInt("first_startup", 1);                
+        }        
     }
 
     // Print heap stats
@@ -1236,7 +1250,10 @@ void Application::Reboot() {
 }
 
 void Application::WakeWordInvoke(const std::string& wake_word) {
+    // log current state
+    ESP_LOGI(TAG, "External wake word invoked: %s in state %s", wake_word.c_str(), STATE_STRINGS[device_state_]);
     if (device_state_ == kDeviceStateIdle) {
+        ESP_LOGI(TAG, "About to toggle chat state due to external wake word: %s", wake_word.c_str());
         ToggleChatState();
         Schedule([this, wake_word]() {
             if (protocol_) {
