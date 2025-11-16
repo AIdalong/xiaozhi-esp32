@@ -754,7 +754,10 @@ void Application::Start() {
             ToggleChatState();
             WakeWordInvoke(Lang::Strings::ACTIVATION_PROMPT);
             ESP_LOGI(TAG, "Entering chat mode directly after activation");
-            settings.SetInt("first_startup", 1);                
+            settings.SetInt("first_startup", 1);
+            // clear wifi config flag
+            Settings wifi_settings("wifi_config", true);
+            wifi_settings.SetInt("config_mode", 0);                
         }        
     }
 

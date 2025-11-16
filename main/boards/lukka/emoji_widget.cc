@@ -233,7 +233,8 @@ void EmojiPlayer::TimedPLay(int aaf, float time, int fps,  std::function<void()>
         } else {
             timed_play_callback_ = {};
         }
-
+        
+        StopPlayer();
         StartPlayer(aaf, true, fps);
         // setup timer to stop after time seconds
         esp_timer_create_args_t timer_args = {
@@ -330,8 +331,6 @@ void EmojiWidget::SetEmotion(const char* emotion)
         return;
     }
 
-
-
     using Param = std::tuple<int, bool, int>;
     static const std::unordered_map<std::string, Param> emotion_map = {
         {"happy",       {MMAP_MOJI_EMOJI_HAPPY_AAF, true, EMOJI_FPS}},
@@ -368,15 +367,21 @@ void EmojiWidget::SetEmotion(const char* emotion)
 void EmojiWidget::PlayEmoji(int aaf_id, float time)
 {
     if (player_) {
-        if (aaf_id == MMAP_MOJI_EMOJI_RELAXED_AAF) {
-            StopIdleEmojiRotation();
+        StopIdleEmojiRotation();
+        if (aaf_id == MMAP_MOJI_EMOJI_RELAXED_AAF || Application::GetInstance().GetDeviceState() == kDeviceStateIdle) {
             StartIdleEmojiRotation();
+            return;
         }
         if (time > 0) {
             player_->TimedPLay(aaf_id, time, EMOJI_FPS, [this]() {
                 ESP_LOGI(TAG, "PlayEmoji completed");
                 // Reset the emoji to neutral after the timed play
-                this->player_->StartPlayer(MMAP_MOJI_EMOJI_RELAXED_AAF, true, EMOJI_FPS);
+                this->player_->TimedPLay(MMAP_MOJI_EMOJI_RELAXED_AAF, 2.0f, EMOJI_FPS, [this]() {
+                    ESP_LOGI(TAG, "Returned to RELAXED emoji after timed play");
+
+                    
+                    this->StartIdleEmojiRotation();
+                });
             });
             ESP_LOGI(TAG, "PlayEmoji called --- Play AAF ID: %d for %.2f seconds", aaf_id, time);
         } else {

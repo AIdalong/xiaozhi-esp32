@@ -206,6 +206,12 @@ private:
         int duration_ms;
     };
 
+    // check if wifi configuration boot
+    bool isWifiConfigBoot(){
+        Settings settings("wifi", true);
+        return (settings.GetInt("config_mode", 0) == 1);
+    }
+
 
     static void TouchpadTimerCallback(void* arg) {
         Lukka* board = (Lukka*)arg;
@@ -257,6 +263,10 @@ private:
                 board->is_playing_animation_ = false;
             }
         }
+    }
+
+    static void EmojiEventCallback(void* arg){
+
     }
 
 
@@ -588,9 +598,11 @@ private:
         
         // 播放动画（循环播放）
         // widget->GetPlayer()->StartPlayer(aaf_id, true, 2);
-        widget->GetPlayer()->TimedPLay(aaf_id, time, 10, [this]() {
-            EmojiSwitchTimerCallback(this);
-        });
+        // widget->GetPlayer()->TimedPLay(aaf_id, time, 10, [this]() {
+        //     EmojiSwitchTimerCallback(this);
+        // });
+
+        widget->PlayEmoji(aaf_id);
         // ESP_LOGI(TAG, "Playing emoji animation: %d (loop play)", aaf_id);
         ESP_LOGI(TAG, "Playing emoji animation: %d (play once)", aaf_id);
 
@@ -689,18 +701,18 @@ private:
         if (sound) PlayLocalPrompt(*sound, vehicle_motion_state_.ANIMATION_PLAY_DURATION_US - 100000);
 
         // ensure emoji switch timer will clear the playing flag
-        if (vehicle_motion_state_.emoji_switch_timer_ == nullptr) {
-            esp_timer_create_args_t timer_args = {
-                .callback = EmojiSwitchTimerCallback,
-                .arg = this,
-                .dispatch_method = ESP_TIMER_TASK,
-                .name = "emoji_switch_timer",
-                .skip_unhandled_events = true,
-            };
-            esp_timer_create(&timer_args, &vehicle_motion_state_.emoji_switch_timer_);
-        }
-        esp_timer_stop(vehicle_motion_state_.emoji_switch_timer_);
-        esp_timer_start_once(vehicle_motion_state_.emoji_switch_timer_, vehicle_motion_state_.ANIMATION_PLAY_DURATION_US);
+        // if (vehicle_motion_state_.emoji_switch_timer_ == nullptr) {
+        //     esp_timer_create_args_t timer_args = {
+        //         .callback = EmojiSwitchTimerCallback,
+        //         .arg = this,
+        //         .dispatch_method = ESP_TIMER_TASK,
+        //         .name = "emoji_switch_timer",
+        //         .skip_unhandled_events = true,
+        //     };
+        //     esp_timer_create(&timer_args, &vehicle_motion_state_.emoji_switch_timer_);
+        // }
+        // esp_timer_stop(vehicle_motion_state_.emoji_switch_timer_);
+        // esp_timer_start_once(vehicle_motion_state_.emoji_switch_timer_, vehicle_motion_state_.ANIMATION_PLAY_DURATION_US);
     }
 
     // 晃动事件处理
@@ -711,18 +723,18 @@ private:
         is_playing_animation_ = true;
         PlayTimedEmoji(MMAP_MOJI_EMOJI_DIZZY_AAF);
         PlayLocalPrompt(Lang::Sounds::P3_VIBRATION, vehicle_motion_state_.ANIMATION_PLAY_DURATION_US - 100000);
-        if (vehicle_motion_state_.emoji_switch_timer_ == nullptr) {
-            esp_timer_create_args_t timer_args = {
-                .callback = EmojiSwitchTimerCallback,
-                .arg = this,
-                .dispatch_method = ESP_TIMER_TASK,
-                .name = "emoji_switch_timer",
-                .skip_unhandled_events = true,
-            };
-            esp_timer_create(&timer_args, &vehicle_motion_state_.emoji_switch_timer_);
-        }
-        esp_timer_stop(vehicle_motion_state_.emoji_switch_timer_);
-        esp_timer_start_once(vehicle_motion_state_.emoji_switch_timer_, vehicle_motion_state_.ANIMATION_PLAY_DURATION_US);
+        // if (vehicle_motion_state_.emoji_switch_timer_ == nullptr) {
+        //     esp_timer_create_args_t timer_args = {
+        //         .callback = EmojiSwitchTimerCallback,
+        //         .arg = this,
+        //         .dispatch_method = ESP_TIMER_TASK,
+        //         .name = "emoji_switch_timer",
+        //         .skip_unhandled_events = true,
+        //     };
+        //     esp_timer_create(&timer_args, &vehicle_motion_state_.emoji_switch_timer_);
+        // }
+        // esp_timer_stop(vehicle_motion_state_.emoji_switch_timer_);
+        // esp_timer_start_once(vehicle_motion_state_.emoji_switch_timer_, vehicle_motion_state_.ANIMATION_PLAY_DURATION_US);
     }
 
     
@@ -1038,6 +1050,25 @@ public:
         InitializeSpi();
         InitializeVciEn();
         InitializeGc9a01Display();
+
+        // if it's the first startup, set wifi config mode
+        if (isFirstStartup()){
+            Settings settings("wifi", true);
+            if (settings.GetInt("config_mode", 0) != 2) {
+                settings.SetInt("config_mode", 1);
+                Application::GetInstance().PlaySound(Lang::Sounds::P3_WIFICONFIG);
+            }
+            else{
+                ESP_LOGI(TAG, "WiFi config done, waiting for activation");
+            }
+        }
+
+        // if device is to enter wifi config mode, break here
+        if (isWifiConfigBoot()){
+            ESP_LOGI(TAG, "Entering WiFi configuration mode on boot");
+            return;
+        }
+
         //播放开机音效，临时放在这里，后续优化
         Application::GetInstance().PlaySound(Lang::Sounds::P3_POWERUP);
         InitializeTouchPad();  // 初始化触摸传感器（非触摸屏触控）
@@ -1098,6 +1129,11 @@ public:
     }
 
     virtual AudioCodec* GetAudioCodec() override {
+        bool use_input_reference = AUDIO_INPUT_REFERENCE;
+        if (isWifiConfigBoot()){
+            use_input_reference = false;
+        }
+
         static BoxAudioCodec audio_codec(
             codec_i2c_bus_, 
             AUDIO_INPUT_SAMPLE_RATE, 
@@ -1110,6 +1146,7 @@ public:
             AUDIO_CODEC_PA_PIN, 
             AUDIO_CODEC_ES8311_ADDR, 
             AUDIO_CODEC_ES7210_ADDR, 
+            // use_input_reference);
             AUDIO_INPUT_REFERENCE);
         return &audio_codec;
     }
@@ -1141,14 +1178,17 @@ public:
         if (base_controller_->IsInitialized()) base_controller_->ResetMotor();
     }
 
-    void CheckFirstStartup() override {
-        Settings settings("first_startup", true);
+    bool isFirstStartup() {
+        Settings settings("first_startup", false);
         int first_startup = settings.GetInt("first_startup", 0);
-        if (first_startup != 0) {
+        return (first_startup == 0 );
+    }
+
+    void CheckFirstStartup() override {
+        if (!isFirstStartup()) {
             ESP_LOGI(TAG, "Not first startup, skipping first startup actions");
             return;
         }
-
         // the flag will be cleared after activation completes
 
         ESP_LOGI(TAG, "First startup detected, performing first startup actions");

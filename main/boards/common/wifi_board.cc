@@ -42,6 +42,27 @@ void WifiBoard::EnterWifiConfigMode() {
     auto& application = Application::GetInstance();
     application.SetDeviceState(kDeviceStateWifiConfiguring);
 
+    // set a flag to indicate in config mode
+    // 0: this boot is normal, we set to 1 and reboot
+    // 1: this boot is config mode, we set to 2 after config
+    // 2: this boot is the next boot after config, do nothing
+    //    this is used in the first startup case to avoid infinite config loop
+    Settings settings("wifi", true);
+    int config_mode = settings.GetInt("config_mode", 0);
+    if (config_mode == 0) {
+        // first time to enter config mode, reboot to reinitialize hardware
+        ESP_LOGI(TAG, "First time to enter WiFi config mode, rebooting to reinitialize hardware...");
+
+        // play sound to indicate entering config mode
+        application.PlaySound(Lang::Sounds::P3_WIFICONFIG);
+        
+        settings.SetInt("config_mode", 1);
+        vTaskDelay(pdMS_TO_TICKS(200));
+        esp_restart();
+    }
+
+
+
     auto& wifi_ap = WifiConfigurationAp::GetInstance();
     wifi_ap.SetLanguage(Lang::CODE);
     wifi_ap.SetSsidPrefix("Xiaozhi");
@@ -54,13 +75,8 @@ void WifiBoard::EnterWifiConfigMode() {
     hint += wifi_ap.GetWebServerUrl();
     hint += "\n\n";
     
-    // 播报配置 WiFi 的提示
-    application.Alert(Lang::Strings::WIFI_CONFIG_MODE, hint.c_str(), "", Lang::Sounds::P3_WIFICONFIG);
-
     // start ble broadcast with custom payload
     BleBroadcaster::GetInstance().StartCustom();
-
-
 
     // #if USE_ACOUSTIC_WIFI_PROVISIONING
     #if 1 // temporarily force enable
@@ -82,6 +98,13 @@ void WifiBoard::EnterWifiConfigMode() {
 void WifiBoard::StartNetwork() {
     // User can press BOOT button while starting to enter WiFi configuration mode
     if (wifi_config_mode_) {
+        EnterWifiConfigMode();
+        return;
+    }
+
+    Settings settings("wifi", true);
+    if (settings.GetInt("config_mode", 0) == 1) {
+        ESP_LOGI(TAG, "config_mode is set to 1, entering WiFi configuration mode");
         EnterWifiConfigMode();
         return;
     }

@@ -477,6 +477,9 @@ esp_err_t Ota::Activate() {
     Settings settings("first_startup", true);
     ESP_LOGI(TAG, "To enter chat mode directly after activation");
     settings.SetInt("first_startup", 9);
+    // clear wifi config flag
+    Settings wifi_settings("wifi_config", true);
+    wifi_settings.SetInt("config_mode", 0);       
 
     return ESP_OK;
 }

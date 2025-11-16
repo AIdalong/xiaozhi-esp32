@@ -8,7 +8,6 @@
 
 #define AUDIO_INPUT_SAMPLE_RATE  24000
 #define AUDIO_OUTPUT_SAMPLE_RATE 24000
-// Currently the INPUT_REFERENCE prevent device from capturing audio correctly, so disable it for now
 #define AUDIO_INPUT_REFERENCE    false
 
 #define AUDIO_I2S_GPIO_MCLK GPIO_NUM_6
