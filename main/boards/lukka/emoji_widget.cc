@@ -486,13 +486,13 @@ void EmojiWidget::UpdateStatusBar(bool update_all)
     if (board.GetBatteryLevel(battery_level, charging, discharging)) {
         if (charging) {
             display_status_.power_status = display_status_.CHARGING;
-            colors[2] = COLOR(0.251f, 0.89f, 0.0f); // Green
+            colors[2] = COLOR(0.0f, 1.0f, 0.0f); // Green
         } else if (battery_level >= 20) {
             display_status_.power_status = display_status_.MEDIUM;
             colors[2] = COLOR(0.0f, 0.0f, 0.0f); // Black
         } else {
             display_status_.power_status = display_status_.LOW;
-            colors[2] = COLOR(1.0f, 0.07f, 0.0f); // Red
+            colors[2] = COLOR(0.251f, 0.89f, 0.0f); // Red
         }
     }
 

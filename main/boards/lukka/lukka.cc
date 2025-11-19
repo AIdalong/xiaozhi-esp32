@@ -639,7 +639,7 @@ private:
                         // });
                     }
                 }
-                PlayLocalPrompt(Lang::Sounds::P3_POPUP, 2000000);
+                Application::GetInstance().PlaySound(Lang::Sounds::P3_POPUP);
             }
             if (motion_detector_) motion_detector_->SetPlacementIndependent(true);
         } else if (newState == BaseController::kPlacementRotatingBase) {
@@ -656,7 +656,7 @@ private:
                         // });
                     }
                 }
-                PlayLocalPrompt(Lang::Sounds::P3_POWERUP, 2000000);
+                Application::GetInstance().PlaySound(Lang::Sounds::P3_POWERUP);
             }
             if (motion_detector_) motion_detector_->SetPlacementIndependent(false);
         }
@@ -1146,8 +1146,7 @@ public:
             AUDIO_CODEC_PA_PIN, 
             AUDIO_CODEC_ES8311_ADDR, 
             AUDIO_CODEC_ES7210_ADDR, 
-            // use_input_reference);
-            AUDIO_INPUT_REFERENCE);
+            use_input_reference);
         return &audio_codec;
     }
 
