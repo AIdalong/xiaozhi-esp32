@@ -11,6 +11,8 @@
 #include <esp_gap_ble_api.h>
 #include <esp_bt_main.h>
 #include <esp_bt_device.h>
+#else
+#warning "Bluetooth is disabled in sdkconfig!"
 #endif
 
 // Lightweight singleton to advertise the device name over BLE during WiFi config mode.

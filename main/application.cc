@@ -449,6 +449,7 @@ void Application::Start() {
         }
     }
     codec->Start();
+    codec_init_done_ = true;
 
 #if CONFIG_USE_AUDIO_PROCESSOR
     xTaskCreatePinnedToCore([](void* arg) {

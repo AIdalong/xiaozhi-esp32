@@ -326,6 +326,19 @@ private:
                 if (board->motion_detector_) board->motion_detector_->OnSensorData(
                     s.accel.x, s.accel.y, s.accel.z, s.gyro.x, s.gyro.y, s.gyro.z);
             });
+
+        // Create and initialize base controller (wraps motor controller and base probing)
+        board->base_controller_ = std::make_unique<BaseController>();
+        board->base_controller_->Initialize();
+        // Register placement change callback so board UI/sound reacts to base events
+        if (board->base_controller_) {
+            board->base_controller_->SetPlacementChangedCallback(
+                [board](BaseController::PlacementState newState, BaseController::PlacementState oldState) {
+                    board->OnPlacementChanged(newState, oldState);
+                }
+            );
+            board->base_controller_->StartProbeTask();
+        }
         }
     }
 
@@ -417,6 +430,10 @@ private:
     }
     
     void PlayLocalPrompt(const std::string_view& sound, int64_t disable_after_us = 2000000) {
+        if (Application::GetInstance().IsCodecInitDone() == false) {
+            ESP_LOGW(TAG, "Audio codec not initialized yet, cannot play local prompt");
+            return;
+        }
         // 清空音频队列并重置解码器状态，然后重新启用输出
         Application::GetInstance().ClearAudioQueueAndDisableOutput();
         auto codec = GetAudioCodec();
@@ -1102,9 +1119,7 @@ public:
         InitializeButtons();
         InitializeIot();
 
-        // Create and initialize base controller (wraps motor controller and base probing)
-        base_controller_ = std::make_unique<BaseController>();
-        base_controller_->Initialize();
+
 
         // Create motion detector and provide simple event callbacks into this board
         motion_detector_ = std::make_unique<MotionDetector>(
@@ -1116,15 +1131,6 @@ public:
             }
         );
 
-        // Register placement change callback so board UI/sound reacts to base events
-        if (base_controller_) {
-            base_controller_->SetPlacementChangedCallback(
-                [this](BaseController::PlacementState newState, BaseController::PlacementState oldState) {
-                    OnPlacementChanged(newState, oldState);
-                }
-            );
-            base_controller_->StartProbeTask();
-        }
 
         // 延后初始化BMI270，避免与编解码器I2C初始化阶段冲突
         esp_timer_create_args_t bmi_init_args = {

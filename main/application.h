@@ -89,6 +89,8 @@ public:
     float GetLastDoaAngle() const { return last_doa_angle_deg_; }
     int GetLastDoaSide() const { return last_doa_side_; } // -1: left, 1: right, 0: unknown
 
+    bool IsCodecInitDone() const { return codec_init_done_; }
+
 private:
     Application();
     ~Application();
@@ -120,6 +122,7 @@ private:
     std::list<AudioStreamPacket> audio_decode_queue_;
     std::condition_variable audio_decode_cv_;
     std::list<AudioStreamPacket> audio_testing_queue_;
+    bool codec_init_done_ = false;
 
     // 新增：用于维护音频包的timestamp队列
     std::list<uint32_t> timestamp_queue_;
