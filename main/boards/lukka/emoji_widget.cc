@@ -368,18 +368,22 @@ void EmojiWidget::PlayEmoji(int aaf_id, float time)
 {
     if (player_) {
         StopIdleEmojiRotation();
-        if (aaf_id == MMAP_MOJI_EMOJI_RELAXED_AAF || Application::GetInstance().GetDeviceState() == kDeviceStateIdle) {
+        if (aaf_id == MMAP_MOJI_EMOJI_RELAXED_AAF && Application::GetInstance().GetDeviceState() == kDeviceStateIdle) {
             StartIdleEmojiRotation();
             return;
         }
+        if (is_playing_animation_) {
+            ESP_LOGI(TAG, "PlayEmoji called --- already playing animation, skipping new request for AAF ID: %d", aaf_id);
+            return;
+        }
+        this->is_playing_animation_ = true;
         if (time > 0) {
             player_->TimedPLay(aaf_id, time, EMOJI_FPS, [this]() {
                 ESP_LOGI(TAG, "PlayEmoji completed");
+                this->is_playing_animation_ = false;
                 // Reset the emoji to neutral after the timed play
                 this->player_->TimedPLay(MMAP_MOJI_EMOJI_RELAXED_AAF, 2.0f, EMOJI_FPS, [this]() {
                     ESP_LOGI(TAG, "Returned to RELAXED emoji after timed play");
-
-                    
                     this->StartIdleEmojiRotation();
                 });
             });
@@ -394,10 +398,12 @@ void EmojiWidget::PlayEmoji(int aaf_id, float time)
 void EmojiWidget::SetStatus(const char* status)
 {
     if (player_) {
+        ESP_LOGI(TAG, "SetStatus called --- status: %s", status);
         if (strcmp(status, Lang::Strings::LISTENING) ==0 || strcmp(status, Lang::Strings::SPEAKING) == 0) {
             StopIdleEmojiRotation();
-            player_->StartPlayer(MMAP_MOJI_EMOJI_WINKING_AAF, true, EMOJI_FPS);
-        } else {
+            // player_->StartPlayer(MMAP_MOJI_EMOJI_WINKING_AAF, true, EMOJI_FPS);
+            PlayEmoji(MMAP_MOJI_EMOJI_WINKING_AAF, -1);
+        } else if (strcmp(status, Lang::Strings::STANDBY) ==0) {
             StartIdleEmojiRotation();
         }
     }
@@ -409,6 +415,7 @@ void EmojiWidget::StartIdleEmojiRotation()
         return;
     }
 
+    this->is_playing_animation_ = false;
     if (!idle_rotation_timer_){
         esp_timer_create_args_t timer_args = {
             .callback = [](void* arg) {

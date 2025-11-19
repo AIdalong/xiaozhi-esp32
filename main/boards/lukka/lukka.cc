@@ -154,6 +154,16 @@ private:
     int release_confirm_count_ = 0;        // 释放确认计数器
     bool sleeping_ = false;                   // 睡眠/唤醒状态
     bool is_playing_animation_ = false;       // 是否正在播放动画和声音
+    bool IsPlayingAnimation() {
+        if (auto disp = GetDisplay()) {
+            auto widget = static_cast<moji_anim::EmojiWidget*>(disp);
+            if (widget) {
+                return widget->IsPlayingAnimation();
+            }
+        }
+        ESP_LOGW(TAG, "Display or EmojiWidget is null in IsPlayingAnimation check");
+        return false;
+    }
     adc_oneshot_unit_handle_t adc_handle_ = nullptr;
     adc_cali_handle_t adc_cali_handle_ = nullptr;
     bool do_calibration_ = false;
@@ -411,7 +421,7 @@ private:
         Application::GetInstance().ClearAudioQueueAndDisableOutput();
         auto codec = GetAudioCodec();
         if (codec) {
-            codec->EnableOutput(true);
+            if (!codec->output_enabled()) codec->EnableOutput(true);
         }
         
         // 直接播放声音，与唤醒词保持一致
@@ -525,7 +535,7 @@ private:
                     case TOUCH_SHORT_PRESS:
                         ESP_LOGI(TAG, "Handling short press event, duration: %d ms", event.duration_ms);
                         // 如果正在播放动画和声音，不响应新的触摸事件
-                        if (is_playing_animation_) {
+                        if (IsPlayingAnimation()) {
                             ESP_LOGD(TAG, "Animation playing, skipping touch event");
                             break;
                         }
@@ -544,24 +554,25 @@ private:
                             auto widget = static_cast<moji_anim::EmojiWidget*>(display_);
                             if (widget && widget->GetPlayer()) {
                                 // 设置播放状态标志，防止重复触发
-                                is_playing_animation_ = true;
+                                // is_playing_animation_ = true;
                                 
                                 ESP_LOGI(TAG, "Playing shocked emoji...");
-                                widget->GetPlayer()->StartPlayer(MMAP_MOJI_EMOJI_KNOCKING_AAF, false, 4);
-                                // 使用定时器延迟切换表情，避免阻塞事件处理
-                                if (emoji_switch_timer_ == nullptr) {
-                                    esp_timer_create_args_t timer_args = {
-                                        .callback = EmojiSwitchTimerCallback,
-                                        .arg = this,
-                                        .dispatch_method = ESP_TIMER_TASK,
-                                        .name = "emoji_switch_timer",
-                                        .skip_unhandled_events = true,
-                                    };
-                                    esp_timer_create(&timer_args, &emoji_switch_timer_);
-                                }
-                                esp_timer_stop(emoji_switch_timer_);
-                                esp_timer_start_once(emoji_switch_timer_, 1000 * 1000); // 1秒后切换
-                                ESP_LOGI(TAG, "Shocked emoji played, timer set for emoji switch");
+                                // widget->GetPlayer()->StartPlayer(MMAP_MOJI_EMOJI_KNOCKING_AAF, false, 4);
+                                PlayTimedEmoji(MMAP_MOJI_EMOJI_KNOCKING_AAF, 1.0f);
+                                // // 使用定时器延迟切换表情，避免阻塞事件处理
+                                // if (emoji_switch_timer_ == nullptr) {
+                                //     esp_timer_create_args_t timer_args = {
+                                //         .callback = EmojiSwitchTimerCallback,
+                                //         .arg = this,
+                                //         .dispatch_method = ESP_TIMER_TASK,
+                                //         .name = "emoji_switch_timer",
+                                //         .skip_unhandled_events = true,
+                                //     };
+                                //     esp_timer_create(&timer_args, &emoji_switch_timer_);
+                                // }
+                                // esp_timer_stop(emoji_switch_timer_);
+                                // esp_timer_start_once(emoji_switch_timer_, 1000 * 1000); // 1秒后切换
+                                // ESP_LOGI(TAG, "Shocked emoji played, timer set for emoji switch");
                             } else {
                                 ESP_LOGE(TAG, "Failed to get emoji widget or player");
                             }
@@ -589,12 +600,17 @@ private:
             ESP_LOGW(TAG, "Emoji widget or player not available");
             return;
         }
+
+        if (IsPlayingAnimation()) {
+            ESP_LOGI(TAG, "Animation already playing, skipping new emoji: %d", aaf_id);
+            return;
+        }
         
         // 设置播放状态标志，防止重复触发
-        is_playing_animation_ = true;
+        // is_playing_animation_ = true;
         
         // 更新动画播放时间
-        vehicle_motion_state_.last_animation_time = esp_timer_get_time();
+        // vehicle_motion_state_.last_animation_time = esp_timer_get_time();
         
         // 播放动画（循环播放）
         // widget->GetPlayer()->StartPlayer(aaf_id, true, 2);
@@ -626,29 +642,42 @@ private:
     void OnPlacementChanged(BaseController::PlacementState newState, BaseController::PlacementState oldState){
         // Map to previous behavior: enable/disable vehicle detection and play UI/sounds
         if (newState == BaseController::kPlacementIndependent) {
-            vehicle_motion_state_.detection_enabled = false;
+            if(motion_detector_) motion_detector_->SetPlacementIndependent(true);
             if (oldState == BaseController::kPlacementRotatingBase) {
+                ESP_LOGI(TAG, "Placement changed to INDEPENDENT");
                 if (display_) {
                     auto widget = static_cast<moji_anim::EmojiWidget*>(display_);
                     if (widget && widget->GetPlayer()) {
+                        if (IsPlayingAnimation()){
+                            ESP_LOGI(TAG, "Animation playing, skipping uninstall emoji");
+                            return;
+                        }
                         PlayTimedEmoji(MMAP_MOJI_EMOJI_UNINSTALL_AAF);
+                        // Application::GetInstance().PlaySound(Lang::Sounds::P3_POPUP);
+                        PlayLocalPrompt(Lang::Sounds::P3_POPUP, 2000000);
                         // ESP_LOGI(TAG, "Playing uninstall emoji animation...");
                         // widget->GetPlayer()->PlayOnce(MMAP_MOJI_EMOJI_UNINSTALL_AAF, 2, [this](){
                         //     ESP_LOGI(TAG, "PlayCallback called: uninstall animation completed");
                         //     EmojiSwitchTimerCallback(this);
                         // });
                     }
-                }
-                Application::GetInstance().PlaySound(Lang::Sounds::P3_POPUP);
+                }   
             }
-            if (motion_detector_) motion_detector_->SetPlacementIndependent(true);
         } else if (newState == BaseController::kPlacementRotatingBase) {
+            if (motion_detector_) motion_detector_->SetPlacementIndependent(false);
             if (oldState == BaseController::kPlacementIndependent) {
+                ESP_LOGI(TAG, "Placement changed to ROTATING_BASE");
                 if (base_controller_) base_controller_->ResetMotor();
                 if (display_) {
                     auto widget = static_cast<moji_anim::EmojiWidget*>(display_);
                     if (widget && widget->GetPlayer()) {
+                        if (IsPlayingAnimation()){
+                            ESP_LOGI(TAG, "Animation playing, skipping connecting emoji");
+                            return;
+                        }
                         PlayTimedEmoji(MMAP_MOJI_EMOJI_CONNECTING_AAF);
+                        // Application::GetInstance().PlaySound(Lang::Sounds::P3_POWERUP);
+                        PlayLocalPrompt(Lang::Sounds::P3_POWERUP, 2000000);
                         // ESP_LOGI(TAG, "Playing connecting emoji animation...");
                         // widget->GetPlayer()->PlayOnce(MMAP_MOJI_EMOJI_CONNECTING_AAF, 2, [this](){
                         //     ESP_LOGI(TAG, "PlayCallback called: connecting animation completed");
@@ -656,16 +685,14 @@ private:
                         // });
                     }
                 }
-                Application::GetInstance().PlaySound(Lang::Sounds::P3_POWERUP);
             }
-            if (motion_detector_) motion_detector_->SetPlacementIndependent(false);
         }
     }
 
     // 车辆姿态事件处理
     void OnMotionEvent(MotionDetector::MotionEvent ev) {
         // Board handles gating and playback
-        if (is_playing_animation_) {
+        if (IsPlayingAnimation()) {
             ESP_LOGD(TAG, "Animation playing, skipping motion event");
             return;
         }
@@ -696,7 +723,7 @@ private:
                 break;
         }
 
-        is_playing_animation_ = true;
+        // is_playing_animation_ = true;
         PlayTimedEmoji(aaf_id);
         if (sound) PlayLocalPrompt(*sound, vehicle_motion_state_.ANIMATION_PLAY_DURATION_US - 100000);
 
@@ -717,10 +744,10 @@ private:
 
     // 晃动事件处理
     void OnShakeEvent() {
-        if (is_playing_animation_) return; // 正在播放动画，跳过
+        if (IsPlayingAnimation()) return; // 正在播放动画，跳过
         DeviceState current_state = Application::GetInstance().GetDeviceState();
         if (current_state != kDeviceStateIdle) return;
-        is_playing_animation_ = true;
+        // is_playing_animation_ = true;
         PlayTimedEmoji(MMAP_MOJI_EMOJI_DIZZY_AAF);
         PlayLocalPrompt(Lang::Sounds::P3_VIBRATION, vehicle_motion_state_.ANIMATION_PLAY_DURATION_US - 100000);
         // if (vehicle_motion_state_.emoji_switch_timer_ == nullptr) {

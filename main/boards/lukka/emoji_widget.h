@@ -75,10 +75,15 @@ public:
     {
         return player_.get();
     }
+    bool IsPlayingAnimation() const {
+        return is_playing_animation_;
+    }
+
 private:
     void InitializePlayer(esp_lcd_panel_handle_t panel, esp_lcd_panel_io_handle_t panel_io);
     virtual bool Lock(int timeout_ms = 0) override;
     virtual void Unlock() override;
+    bool is_playing_animation_ = false;
 
     bool idle_rotation_active_ = false;
     int idle_emoji = MMAP_MOJI_EMOJI_RELAXED_AAF;
