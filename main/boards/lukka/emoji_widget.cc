@@ -85,7 +85,7 @@ void EmojiPlayer::OnFlush(anim_player_handle_t handle, int x_start, int y_start,
                         // Set color
                         *pixel_ptr = self->status_point_colors_[i];
                         // blink
-                        if (!self->status_points_visible_ && (i==2)) {
+                        if (!self->status_points_visible_ && (i==2) && self->status_point_colors_[2] == COLOR(0.0f, 1.0f, 0.0f)) {
                             *pixel_ptr = 0x0000; // Black when not visible
                         }
                         // *pixel_ptr = test_color[i];
