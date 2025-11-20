@@ -10,8 +10,13 @@
 #include <esp_mmap_assets.h>
 #include "mmap_generate_moji_emoji.h"
 
-// extern const uint8_t assets_A_bin_start[] asm("_binary_assets_A_bin_start");
-// extern const uint8_t assets_A_bin_end[]   asm("_binary_assets_A_bin_end");
+
+#define COLOR(r, g, b) (uint16_t)(((uint8_t)(b*31) << 11) | ((uint8_t)(r*63) << 5) | ((uint8_t)(g*31)))
+#define COLOR_GREEN COLOR(0.0f, 1.0f, 0.0f)
+#define COLOR_RED   COLOR(1.0f, 0.0f, 0.0f)
+#define COLOR_BLUE  COLOR(0.0f, 0.706f, 1.0f)
+#define COLOR_ORANGE COLOR(1.0f, 0.5f, 0.0f)
+#define COLOR_BLACK 0x0000
 
 namespace moji_anim {
 

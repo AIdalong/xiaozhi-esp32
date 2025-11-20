@@ -22,11 +22,6 @@
 #include <freertos/queue.h>
 #include <freertos/event_groups.h>
 
-// convert from rgb 0~1 to BRG565
-// __G
-// _R_
-// B
-#define COLOR(r, g, b) (uint16_t)(((uint8_t)(b*31) << 11) | ((uint8_t)(r*63) << 5) | ((uint8_t)(g*31)))
 
 static const char *TAG = "moji_emoji";
 #define EMOJI_FPS 10
@@ -85,8 +80,8 @@ void EmojiPlayer::OnFlush(anim_player_handle_t handle, int x_start, int y_start,
                         // Set color
                         *pixel_ptr = self->status_point_colors_[i];
                         // blink
-                        if (!self->status_points_visible_ && (i==2) && self->status_point_colors_[2] == COLOR(0.0f, 1.0f, 0.0f)) {
-                            *pixel_ptr = 0x0000; // Black when not visible
+                        if (!self->status_points_visible_ && (i==2) && self->status_point_colors_[2] == COLOR_GREEN) {
+                            *pixel_ptr = COLOR_BLACK; // Black when not visible
                         }
                         // *pixel_ptr = test_color[i];
                     }
@@ -493,23 +488,23 @@ void EmojiWidget::UpdateStatusBar(bool update_all)
     if (board.GetBatteryLevel(battery_level, charging, discharging)) {
         if (charging) {
             display_status_.power_status = display_status_.CHARGING;
-            colors[2] = COLOR(0.0f, 1.0f, 0.0f); // Green
+            colors[2] = COLOR_GREEN;
         } else if (battery_level >= 20) {
             display_status_.power_status = display_status_.MEDIUM;
-            colors[2] = COLOR(0.0f, 0.0f, 0.0f); // Black
+            colors[2] = COLOR_BLACK;
         } else {
             display_status_.power_status = display_status_.LOW;
-            colors[2] = COLOR(0.251f, 0.89f, 0.0f); // Red
+            colors[2] = COLOR_RED;
         }
     }
 
     // network
     if (strcmp(board.GetNetworkStateIcon(), FONT_AWESOME_WIFI_OFF) == 0) {
         display_status_.network_status = display_status_.DISCONNECTED;
-        colors[0] = 0x0000;
+        colors[0] = COLOR_BLACK;
     } else {
         display_status_.network_status = display_status_.CONNECTED;
-        colors[0] = COLOR(0.0f, 0.706f, 1.0f); // Blue
+        colors[0] = COLOR_BLUE;
     }
 
     // privacy mode
@@ -517,7 +512,7 @@ void EmojiWidget::UpdateStatusBar(bool update_all)
     if (app.GetDeviceState() == kDeviceStateListening || app.GetDeviceState() == kDeviceStateConnecting)
     {
         display_status_.privacy_status = display_status_.NORMAL;
-        colors[1] = COLOR(1.0f, 0.5f, 0.0f); // Orange
+        colors[1] = COLOR_ORANGE;
     } 
     else 
     {
@@ -531,7 +526,7 @@ void EmojiWidget::UpdateStatusBar(bool update_all)
         //         return; // do not change
         //     }
         // }
-        colors[1] = 0x0000; // Black
+        colors[1] = COLOR_BLACK;
     }
 
     player_->SetStatusPointColors(colors);
