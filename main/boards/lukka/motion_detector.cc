@@ -27,20 +27,13 @@ void MotionDetector::OnSensorData(float accel_x, float accel_y, float accel_z, f
     last_.ax = accel_x; last_.ay = accel_y; last_.az = accel_z;
     last_.gx = gyro_x; last_.gy = gyro_y; last_.gz = gyro_z;
 
-    // Append gyro X/Y for shake detection
-    gyro_x_buffer.push_back(last_.gx);
-    gyro_y_buffer.push_back(last_.gy);
-    if (gyro_x_buffer.size() > (size_t)BUFFER_SIZE) gyro_x_buffer.erase(gyro_x_buffer.begin());
-    if (gyro_y_buffer.size() > (size_t)BUFFER_SIZE) gyro_y_buffer.erase(gyro_y_buffer.begin());
+    // // print data to serial for debugging
+    // ESP_LOGI(TAG_MOTION, "IMU:0, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f", last_.ax, last_.ay, last_.az, last_.gx, last_.gy, last_.gz);
 
-    ProcessVehicleMotion();
-
-    int64_t now = esp_timer_get_time();
-    DetectShake(now);
-}
-
-void MotionDetector::ProcessVehicleMotion() {
-    if (placement_independent_) return; // skip when independent
+    if (placement_independent_) {
+    DetectShake(esp_timer_get_time());
+        return; // skip when independent
+    }
 
     int64_t current_time = esp_timer_get_time();
     if (init_start_time == 0) {
@@ -55,6 +48,22 @@ void MotionDetector::ProcessVehicleMotion() {
         if (accel_x_buffer.size() > (size_t)BUFFER_SIZE) accel_x_buffer.erase(accel_x_buffer.begin());
         if (accel_y_buffer.size() > (size_t)BUFFER_SIZE) accel_y_buffer.erase(accel_y_buffer.begin());
         if (gyro_z_buffer.size() > (size_t)BUFFER_SIZE) gyro_z_buffer.erase(gyro_z_buffer.begin());
+        mean_index ++;
+        if (mean_index >= BUFFER_SIZE) {
+            mean_index = 0;
+
+            // calculate averages
+            float sum_ax = 0.0f;
+            float sum_gz = 0.0f;
+            for (float val : accel_x_buffer) sum_ax += val;
+            for (float val : gyro_z_buffer) sum_gz += val;
+
+            // store means for CUSUM
+            accel_x_means.push_back(sum_ax / accel_x_buffer.size());
+            gyro_z_means.push_back(sum_gz / gyro_z_buffer.size());
+            if (accel_x_means.size() > (size_t)CUSUM_SIZE) accel_x_means.erase(accel_x_means.begin());
+            if (gyro_z_means.size() > (size_t)CUSUM_SIZE) gyro_z_means.erase(gyro_z_means.begin());
+        }
         return;
     }
 
@@ -63,56 +72,82 @@ void MotionDetector::ProcessVehicleMotion() {
         ESP_LOGI(TAG_MOTION, "Vehicle motion detection enabled after stabilization period");
     }
 
+    ProcessVehicleMotion();
+}
+
+void MotionDetector::ProcessVehicleMotion() {
+
+
     accel_x_buffer.push_back(last_.ax);
-    accel_y_buffer.push_back(last_.ay);
     gyro_z_buffer.push_back(last_.gz);
     if (accel_x_buffer.size() > (size_t)BUFFER_SIZE) accel_x_buffer.erase(accel_x_buffer.begin());
-    if (accel_y_buffer.size() > (size_t)BUFFER_SIZE) accel_y_buffer.erase(accel_y_buffer.begin());
     if (gyro_z_buffer.size() > (size_t)BUFFER_SIZE) gyro_z_buffer.erase(gyro_z_buffer.begin());
+    mean_index ++;
 
-    if (accel_x_buffer.size() >= (size_t)BUFFER_SIZE) {
-        float sum_x = 0, sum_y = 0, sum_gz = 0;
-        for (int i = 0; i < BUFFER_SIZE; ++i) {
-            sum_x += accel_x_buffer[i];
-            sum_y += accel_y_buffer[i];
-            sum_gz += gyro_z_buffer[i];
-        }
-        accel_x_filtered = sum_x / BUFFER_SIZE;
-        accel_y_filtered = sum_y / BUFFER_SIZE;
-        gyro_z_filtered = sum_gz / BUFFER_SIZE;
+    if (mean_index >= BUFFER_SIZE) {
+        mean_index = 0;
+        
+        // calculate averages
+        float sum_ax = 0.0f;
+        float sum_gz = 0.0f;
+        for (float val : accel_x_buffer) sum_ax += val;
+        for (float val : gyro_z_buffer) sum_gz += val;
 
-        // emit motion events; board will decide whether to act (play animation/sound)
+        // store means for CUSUM
+        accel_x_means.push_back(sum_ax / accel_x_buffer.size());
+        gyro_z_means.push_back(sum_gz / gyro_z_buffer.size());
+        if (accel_x_means.size() > (size_t)CUSUM_SIZE) accel_x_means.erase(accel_x_means.begin());
+        if (gyro_z_means.size() > (size_t)CUSUM_SIZE) gyro_z_means.erase(gyro_z_means.begin());
+
         DetectVehiclePosture(esp_timer_get_time());
     }
 }
 
 void MotionDetector::DetectVehiclePosture(int64_t current_time) {
     // Board is responsible for gating animations; MotionDetector only emits events
-    const float ACCEL_X_THRESHOLD_ACCEL = 0.3f * 9.80665f;
-    const float ACCEL_X_THRESHOLD_BRAKE = 0.6f * 9.80665f;
+    const float ACCEL_X_THRESHOLD_ACCEL = 0.25f * 9.80665f;
+    const float ACCEL_X_THRESHOLD_BRAKE = 0.25f * 9.80665f;
     const float GYRO_Z_THRESHOLD = 18.0f;
 
-    if (accel_x_filtered < -ACCEL_X_THRESHOLD_ACCEL) {
-        ESP_LOGI(TAG_MOTION, "Vehicle accelerating: ax=%.3f g", accel_x_filtered / 9.80665f);
+    float train_mean = 0.0f;
+    for (size_t i = 0; i < accel_x_means.size() * 3 / 4; i++) {
+        train_mean += accel_x_means[i];
+    }
+    train_mean /= (accel_x_means.size() * 3 / 4);
+
+    float detect_val = 0.0f;
+    for (size_t i = accel_x_means.size() * 3 / 4; i < accel_x_means.size(); i++) {
+        detect_val += accel_x_means[i];
+    }   
+    detect_val /= (accel_x_means.size() / 4);
+
+    float gyro_z_filtered = gyro_z_means.back();
+
+    if (detect_val < train_mean - ACCEL_X_THRESHOLD_ACCEL) {
+        ESP_LOGI(TAG_MOTION, "Vehicle accelerating: ax=%.3f g",  detect_val / 9.80665f);
         if (on_motion_) on_motion_(MotionEvent::Speeding);
+        init_start_time = 0;
         return;
     }
 
-    if (accel_x_filtered > ACCEL_X_THRESHOLD_BRAKE) {
-        ESP_LOGI(TAG_MOTION, "Vehicle braking: ax=%.3f g", accel_x_filtered / 9.80665f);
+    if (detect_val > train_mean + ACCEL_X_THRESHOLD_BRAKE) {
+        ESP_LOGI(TAG_MOTION, "Vehicle braking: ax=%.3f g", detect_val / 9.80665f);
         if (on_motion_) on_motion_(MotionEvent::Braking);
+        init_start_time = 0;
         return;
     }
 
     if (gyro_z_filtered > GYRO_Z_THRESHOLD) {
         ESP_LOGI(TAG_MOTION, "Vehicle turning left: gz=%.1f deg/s", gyro_z_filtered);
         if (on_motion_) on_motion_(MotionEvent::TurnLeft);
+        init_start_time = 0;
         return;
     }
 
     if (gyro_z_filtered < -GYRO_Z_THRESHOLD) {
         ESP_LOGI(TAG_MOTION, "Vehicle turning right: gz=%.1f deg/s", gyro_z_filtered);
         if (on_motion_) on_motion_(MotionEvent::TurnRight);
+        init_start_time = 0;
         return;
     }
 }

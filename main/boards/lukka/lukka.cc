@@ -742,7 +742,7 @@ private:
 
         // is_playing_animation_ = true;
         PlayTimedEmoji(aaf_id);
-        if (sound) PlayLocalPrompt(*sound, vehicle_motion_state_.ANIMATION_PLAY_DURATION_US - 100000);
+        if (sound) PlayLocalPrompt(*sound);
 
         // ensure emoji switch timer will clear the playing flag
         // if (vehicle_motion_state_.emoji_switch_timer_ == nullptr) {

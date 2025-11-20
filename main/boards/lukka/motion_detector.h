@@ -36,21 +36,25 @@ private:
     std::vector<float> accel_y_buffer;
     std::vector<float> gyro_z_buffer;
 
-    int BUFFER_SIZE = 10;
-    float accel_x_filtered = 0.0f;
-    float accel_y_filtered = 0.0f;
-    float gyro_z_filtered = 0.0f;
+    int BUFFER_SIZE = 20;
+
+    const int CUSUM_SIZE = 10;
+    const int CUSUM_GROUP_SIZE = 5;
+    int mean_index = 0;
+    std::vector<float> accel_x_means;
+    std::vector<float> gyro_z_means;
+
 
     int64_t last_animation_time = 0;
     const int64_t ANIMATION_COOLDOWN_US = 3000 * 1000;
     int64_t init_start_time = 0;
-    const int64_t INIT_STABILIZATION_US = 5000 * 1000;
+    const int64_t INIT_STABILIZATION_US = 3000 * 1000;
     bool detection_enabled = false;
 
     int64_t shake_start_time = 0;
     int64_t last_shake_animation_time = 0;
     const int64_t SHAKE_DETECTION_DURATION_US = 3000 * 1000;
-    const int64_t SHAKE_COOLDOWN_US = 5000 * 1000;
+    const int64_t SHAKE_COOLDOWN_US = 3000 * 1000;
     const float SHAKE_THRESHOLD = 15.0f;
     bool is_shaking = false;
 
