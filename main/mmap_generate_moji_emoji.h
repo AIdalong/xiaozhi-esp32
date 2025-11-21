@@ -13,33 +13,29 @@
 
 #include "esp_mmap_assets.h"
 
-#define MMAP_MOJI_EMOJI_FILES           23
-#define MMAP_MOJI_EMOJI_CHECKSUM        0xBBEA
+#define MMAP_MOJI_EMOJI_FILES           21
+#define MMAP_MOJI_EMOJI_CHECKSUM        0xF063
 
 enum MMAP_MOJI_EMOJI_LISTS {
     MMAP_MOJI_EMOJI_ANGRY_AAF = 0,        /*!< angry.aaf */
     MMAP_MOJI_EMOJI_BLINK_AAF = 1,        /*!< blink.aaf */
     MMAP_MOJI_EMOJI_BRAKING_AAF = 2,        /*!< braking.aaf */
-    MMAP_MOJI_EMOJI_CONNECTING_AAF = 3,        /*!< connecting.aaf */
-    MMAP_MOJI_EMOJI_DEEPSLEEP_AAF = 4,        /*!< deepsleep.aaf */
-    MMAP_MOJI_EMOJI_DIZZY_AAF = 5,        /*!< dizzy.aaf */
-    MMAP_MOJI_EMOJI_FLAG_AAF = 6,        /*!< flag.aaf */
-    MMAP_MOJI_EMOJI_HAPPY_AAF = 7,        /*!< happy.aaf */
+    MMAP_MOJI_EMOJI_DEEPSLEEP_AAF = 3,        /*!< deepsleep.aaf */
+    MMAP_MOJI_EMOJI_DIZZY_AAF = 4,        /*!< dizzy.aaf */
+    MMAP_MOJI_EMOJI_FLAG_AAF = 5,        /*!< flag.aaf */
+    MMAP_MOJI_EMOJI_HAPPY_AAF = 6,        /*!< happy.aaf */
+    MMAP_MOJI_EMOJI_INSTALL_AAF = 7,        /*!< install.aaf */
     MMAP_MOJI_EMOJI_KNOCKING_AAF = 8,        /*!< knocking.aaf */
     MMAP_MOJI_EMOJI_LOOKLEFT_AAF = 9,        /*!< lookleft.aaf */
     MMAP_MOJI_EMOJI_LOOKRIGHT_AAF = 10,        /*!< lookright.aaf */
-    MMAP_MOJI_EMOJI_MUSIC_AAF = 11,        /*!< music.aaf */
-    MMAP_MOJI_EMOJI_RELAXED_AAF = 12,        /*!< relaxed.aaf */
-    MMAP_MOJI_EMOJI_SAD_AAF = 13,        /*!< sad.aaf */
-    MMAP_MOJI_EMOJI_SAFEBELT_AAF = 14,        /*!< safebelt.aaf */
-    MMAP_MOJI_EMOJI_SPEEDING_AAF = 15,        /*!< speeding.aaf */
-    MMAP_MOJI_EMOJI_THINKING_AAF = 16,        /*!< thinking.aaf */
-    MMAP_MOJI_EMOJI_TURNLEFT_AAF = 17,        /*!< turnleft.aaf */
-    MMAP_MOJI_EMOJI_TURNRIGHT_AAF = 18,        /*!< turnright.aaf */
-    MMAP_MOJI_EMOJI_UNINSTALL_AAF = 19,        /*!< uninstall.aaf */
-    MMAP_MOJI_EMOJI_UNNAMED_AAF = 20,        /*!< unnamed.aaf */
-    MMAP_MOJI_EMOJI_WINKING_AAF = 21,        /*!< winking.aaf */
-    MMAP_MOJI_EMOJI_YAWNING_AAF = 22,        /*!< yawning.aaf */
-
-
+    MMAP_MOJI_EMOJI_MEMO_AAF = 11,        /*!< memo.aaf */
+    MMAP_MOJI_EMOJI_MUSIC_AAF = 12,        /*!< music.aaf */
+    MMAP_MOJI_EMOJI_RELAXED_AAF = 13,        /*!< relaxed.aaf */
+    MMAP_MOJI_EMOJI_SAD_AAF = 14,        /*!< sad.aaf */
+    MMAP_MOJI_EMOJI_SAFEBELT_AAF = 15,        /*!< safebelt.aaf */
+    MMAP_MOJI_EMOJI_SPEEDING_AAF = 16,        /*!< speeding.aaf */
+    MMAP_MOJI_EMOJI_THINKING_AAF = 17,        /*!< thinking.aaf */
+    MMAP_MOJI_EMOJI_UNINSTALL_AAF = 18,        /*!< uninstall.aaf */
+    MMAP_MOJI_EMOJI_WINKING_AAF = 19,        /*!< winking.aaf */
+    MMAP_MOJI_EMOJI_YAWNING_AAF = 20,        /*!< yawning.aaf */
 };

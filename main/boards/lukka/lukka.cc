@@ -692,11 +692,11 @@ private:
                             ESP_LOGI(TAG, "Animation playing, skipping connecting emoji");
                             return;
                         }
-                        PlayTimedEmoji(MMAP_MOJI_EMOJI_CONNECTING_AAF);
+                        PlayTimedEmoji(MMAP_MOJI_EMOJI_INSTALL_AAF);
                         // Application::GetInstance().PlaySound(Lang::Sounds::P3_POWERUP);
                         PlayLocalPrompt(Lang::Sounds::P3_POWERUP, 2000000);
                         // ESP_LOGI(TAG, "Playing connecting emoji animation...");
-                        // widget->GetPlayer()->PlayOnce(MMAP_MOJI_EMOJI_CONNECTING_AAF, 2, [this](){
+                        // widget->GetPlayer()->PlayOnce(MMAP_MOJI_EMOJI_INSTALL_AAF, 2, [this](){
                         //     ESP_LOGI(TAG, "PlayCallback called: connecting animation completed");
                         //     EmojiSwitchTimerCallback(this);
                         // });
@@ -732,11 +732,11 @@ private:
                 break;
             case MotionDetector::MotionEvent::TurnLeft:
                 sound = &Lang::Sounds::P3_TURN;
-                aaf_id =  MMAP_MOJI_EMOJI_TURNLEFT_AAF;
+                aaf_id =  MMAP_MOJI_EMOJI_LOOKLEFT_AAF;
                 break;
             case MotionDetector::MotionEvent::TurnRight:
                 sound = &Lang::Sounds::P3_TURN;
-                aaf_id =  MMAP_MOJI_EMOJI_TURNRIGHT_AAF;
+                aaf_id =  MMAP_MOJI_EMOJI_LOOKRIGHT_AAF;
                 break;
         }
 
